@@ -1,0 +1,19 @@
+anydoc.wasm is a build artifact, committed on purpose.
+
+Go modules have no build step: whatever is in the repository is what `go get`
+delivers to downstream users. So the module is built once, reviewed, and
+committed, rather than produced on each install.
+
+  what      wasm32-wasip1 command module
+  source    rust/src/main.rs, wrapping the anydoc crate pinned in rust/Cargo.toml
+  built by  `make wasm` (Rust 1.88 + wasm32-wasip1, then wasm-opt -Oz)
+            or the build-wasm workflow, which opens a PR
+  checksum  anydoc.wasm.sha256
+  version   embed.go's EmbeddedAnydocVersion, reported by anydoc.Info()
+
+Rebuilding it changes conversion output for every downstream user, which is why
+the crate version is pinned with `=` and bumping it goes through a reviewed PR.
+
+To develop against the harness without a Rust toolchain, use `make test`: it
+builds a Go wasip1 stub speaking the same ABI and runs the suite under
+-tags anydoc_nowasm.

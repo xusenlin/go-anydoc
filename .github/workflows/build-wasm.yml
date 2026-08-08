@@ -1,0 +1,76 @@
+name: build-wasm
+
+# The wasm is a build artifact that lives in the repo, because Go modules have
+# no build step: whatever is committed is what downstream users get. Rebuilding
+# is therefore a deliberate, reviewed action, not something CI does on push.
+on:
+  workflow_dispatch:
+    inputs:
+      anydoc_version:
+        description: "anydoc crate version to build against"
+        required: true
+        default: "0.1.7"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.22' }
+
+      # One job, one artifact. wasm is platform-independent, which is the whole
+      # reason this package cross-compiles without a build matrix.
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.88 --profile minimal
+          rustup default 1.88
+          rustup target add wasm32-wasip1
+
+      - name: Pin anydoc version
+        run: |
+          cd rust
+          sed -i 's/^anydoc = "=.*"/anydoc = "=${{ inputs.anydoc_version }}"/' Cargo.toml
+          grep '^anydoc' Cargo.toml
+
+      - name: Install wasm-opt
+        run: |
+          curl -sSL https://github.com/WebAssembly/binaryen/releases/download/version_119/binaryen-version_119-x86_64-linux.tar.gz \
+            | tar xz --strip-components=1 -C /usr/local
+
+      # Through the Makefile, so a local `make wasm` and this workflow cannot
+      # drift into producing differently-optimised modules. It writes both
+      # anydoc.wasm and anydoc.wasm.sha256.
+      - name: Build
+        run: |
+          make wasm
+          ls -l anydoc.wasm
+          cat anydoc.wasm.sha256
+
+      - name: Record provenance
+        run: |
+          sed -i 's/^const EmbeddedAnydocVersion = .*/const EmbeddedAnydocVersion = "${{ inputs.anydoc_version }}"/' embed.go
+          grep EmbeddedAnydocVersion embed.go
+
+      # Both suites: the stub proves the harness, the real module proves the
+      # rebuilt wasm still agrees with the exit-code table in errors.go.
+      - name: Verify the module still satisfies the Go side
+        run: |
+          make test
+          go test ./...
+
+      - uses: peter-evans/create-pull-request@v6
+        with:
+          branch: bump-anydoc-${{ inputs.anydoc_version }}
+          title: "Rebuild wasm against anydoc ${{ inputs.anydoc_version }}"
+          body: |
+            Rebuilt from the pinned crate.
+
+            Review before merging: conversion output changes for every
+            downstream user, and the exit-code ABI in rust/src/main.rs must
+            still agree with errors.go.
+          add-paths: |
+            anydoc.wasm
+            anydoc.wasm.sha256
+            embed.go
+            rust/Cargo.toml

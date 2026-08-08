@@ -1,0 +1,8 @@
+rust/target/
+*.test
+testdata/stub.wasm
+
+# Editors
+.idea/
+.vscode/
+.DS_Store

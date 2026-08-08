@@ -1,0 +1,23 @@
+[package]
+name = "anydoc-wasi"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+publish = false
+description = "Thin wasm32-wasip1 command wrapper around the anydoc crate, for go-anydoc."
+
+[dependencies]
+# Pinned on purpose. Bumping this is an explicit, reviewed action:
+# it changes conversion output for every downstream Go user.
+anydoc = "=0.1.7"
+
+[[bin]]
+name = "anydoc-wasi"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "z"     # size over speed; wazero's interpreter dominates runtime anyway
+lto = "fat"
+codegen-units = 1
+panic = "abort"     # no unwinding tables in the wasm
+strip = true

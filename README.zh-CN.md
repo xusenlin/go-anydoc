@@ -1,0 +1,138 @@
+# go-anydoc
+
+[English](README.md) | 简体中文
+
+[anydoc](https://github.com/firecrawl/anydoc) 的 Go 绑定——把 Word、PowerPoint、Excel、OpenDocument、RTF、EPUB、CSV 和文本型 PDF 转成 Markdown。
+
+**无 cgo，无子进程，无系统依赖。** Rust 库编译成 WebAssembly 内嵌进包里，所以用了这个包的二进制是自包含的，Go 能交叉编译到哪它就能到哪：
+
+```
+CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build ./...
+```
+
+## 安装
+
+```
+go get github.com/xusenlin/go-anydoc
+```
+
+## 用法
+
+```go
+c, err := anydoc.New()
+if err != nil {
+    return err
+}
+defer c.Close(ctx)
+
+md, err := c.Convert(ctx, docBytes, "docx")
+```
+
+格式提示传 `""` 表示从内容自动识别。CSV 没有文件签名，必须显式指定。
+
+错误用 `errors.Is` 判断：
+
+```go
+switch {
+case errors.Is(err, anydoc.ErrEncrypted):    // 有密码保护
+case errors.Is(err, anydoc.ErrUnsupported):  // anydoc 不认识的格式
+case errors.Is(err, anydoc.ErrMalformed):    // 格式认得出但内容损坏
+}
+```
+
+## 设计取舍
+
+**用解释器而不是优化编译器。** wazero 有两种执行引擎：一种在加载时把 wasm 翻译成宿主机原生机器码（跑得快，加载贵，只支持 amd64/arm64），另一种逐条解释执行（加载几乎免费，哪都能跑，跑得慢）。本包**默认**用解释器——一个要塞进别人二进制里的库，没法假定自己能在用户机器上预热编译缓存，没法假定宿主允许编译器需要的可执行内存页（macOS hardened runtime 和某些 seccomp 策略会直接拒绝），更没法假定目标平台是 amd64 或 arm64。需要另一头的取舍时用 `WithCompiler` 显式打开。
+
+代价是真实存在的，而且随文档体积放大，上生产前请拿自己的语料实测：
+
+| | 解释器（默认） | 编译器（`WithCompiler`） |
+|---|---|---|
+| `New()`——每进程一次 | 约 85 ms | 约 2.1 s |
+| 1 KB docx | 5.0 ms | 1.0 ms |
+| 解压后正文 5 MB 的 docx | 16.9 s | 1.1 s |
+| `New()` 之后的 RSS | 135 MB | 576 MB |
+
+常规办公文档落在第二行，几毫秒，没有优化价值。上兆字节的文档则比编译模式慢约 **16 倍**——如果你要处理这类文档，要么用 `WithMaxInputBytes` 加 context 超时把长尾兜住（取消会当场打断 guest），要么显式打开 `WithCompiler`。
+
+<sub>实测环境：Apple M5 Pro，macOS 26.5，Go 1.26.1，wazero v1.9.0，`anydoc.wasm` 5,069,778 字节（anydoc 0.1.7）。5 MB 那一行是 2.5 万行表格，zip 后只有 42 KB——真正决定耗时的是解压后的正文体积，不是文件大小。</sub>
+
+**每份文档一个全新 guest。** 每次 `Convert` 都新建独立的线性内存，所以一份大文档不会让内存被永久占住，一份畸形文档也不会把状态泄漏给下一次调用。真正昂贵的编译只在 `New` 里做一次。
+
+**用 command 模块而不是导出函数。** guest 读 stdin 写 stdout，Go 侧完全不用碰线性内存、指针和 UTF-8 边界，错误类型由退出码携带。见 `rust/src/main.rs`——那里的退出码表和 `errors.go` 是一份跨两种语言的契约。
+
+**沙箱。** 只挂 WASI 的 stdio 和 `random_get`（`HashMap` 播种要用）。不给文件系统，不给时钟，不给套接字。
+
+## 控制体积
+
+默认内嵌模块，`go get` 完 `New()` 就能跑。想把载荷单独分发的：
+
+```
+go build -tags anydoc_nowasm    # 省下 4.87 MB
+```
+
+此时 `embeddedWASM` 为 nil，`New` 要求必须传 `WithWASM(r)` 或 `WithWASMBytes(b)`。适用于容器分层、Serverless 部署包大小限制、锁定另一个 anydoc 构建，或者禁止二进制内嵌不可追溯 blob 的合规环境。
+
+省下的是 4.83 MB 的模块本身，再加上约 35 KB 的 `embed` 机制开销。给个体感：`examples/convert` 正常编译 12.4 MB，加上这个 tag 是 7.3 MB。
+
+注意 build tag 只影响编译产物，不影响 `go get`——模块文件在 Go module 里躺着，两种情况都要下载。
+
+## 参数调节
+
+```go
+anydoc.New(
+    anydoc.WithConcurrency(4),        // 同时运行的 guest 数，控制峰值内存的主要手段
+    anydoc.WithMemoryLimitPages(512), // 单个 guest 32 MiB
+    anydoc.WithMaxInputBytes(64<<20),
+    anydoc.WithCompiler(),            // 用启动成本换吞吐，见下
+)
+```
+
+### `WithCompiler`
+
+把模块编译成原生机器码而不是解释执行，效果就是把上面那张表从左列变成右列。
+
+这笔成本**只在 `New` 里付一次**，不是每份文档都付——`Convert` 只做实例化，用的是已经编好的模块。所以它适合长期运行、复用同一个 `Converter` 的进程；对于「转一份小文档就退出」的短命进程则是纯亏：花 2.1 秒省 4 毫秒。
+
+它是一个**请求，不是保证**。编译器后端需要主流操作系统上的 amd64 或 arm64，还需要宿主允许 mmap 可执行页。条件不满足时——riscv64、ppc64le、386、macOS hardened runtime、某些 seccomp 策略——wazero 会**静默退回解释器**，转换照常完成，只是速度是解释器的速度。
+
+**不影响交叉编译**：wazero 是纯 Go，这个选项不引入任何构建约束。
+
+`WithMemoryLimitPages` 是在 `New` 时对照模块声明的最小内存校验的，**不是转换时**——设太低会立刻报错并说明原因，而不是过一会儿变成一个莫名其妙的转换失败。
+
+单个 guest 实际需要多少内存，取决于**解压后**的正文体积，大约是它的 15–30 倍——zip 炸弹在磁盘上很小、在内存里很大，这个上限就是为此存在的：
+
+| 文档 | 所需页数 |
+|---|---|
+| 模块最小值，什么都转不了 | 64（4 MiB） |
+| docx，正文 0.4 MB | 192（12 MiB） |
+| docx，正文 2 MB | 576（36 MiB） |
+| docx，正文 5 MB | 1280（80 MiB） |
+
+默认 512 页大约覆盖 2 MB 正文，绝大多数办公文档都在这个范围内。如果某些文档在别处能转、在这里报 `ErrWASM`，就调高它。注意每个并发 guest 都可能占满这个额度，所以 `WithConcurrency` 乘以这个值才是你真正的内存上限。
+
+## 开发
+
+```
+make test    # 构建 wasip1 测试 stub，跑测试套件
+make wasm    # 重新构建真实模块，需要 Rust 1.88 + wasm32-wasip1
+```
+
+测试分成两套，用 build tag 隔开：
+
+- `anydoc_test.go` 在 `-tags anydoc_nowasm` 下跑，对象是用 Go 自己的 `wasip1` target 编出来的 stub。stub 遵守同样的 ABI 但不做任何转换，所以整个宿主层——stdio 接线、退出码映射、并发、取消、内存隔离——**没有 Rust 工具链也能测**。详见 `testdata/README.md`。
+- `anydoc_real_test.go` 打的是 `!anydoc_nowasm` tag，因此**有 `anydoc.wasm` 时才会被编译**，测的是这套东西真正要干的活：真实转换输出、格式识别，以及 crate 实际会吐出的错误码。
+
+`anydoc.wasm` 是提交进仓库的构建产物——Go module 没有构建步骤，提交进去的是什么，下游 `go get` 拿到的就是什么。它由 `make wasm` 或 `build-wasm` workflow 从锁定版本的 crate 构建，`anydoc.wasm.sha256` 记录当前这份的校验和。
+
+## 版本管理
+
+`anydoc.EmbeddedAnydocVersion` 报告当前模块是从哪个上游 crate 版本构建的；`anydoc.Info()` 把它和载荷大小一起打印出来。
+
+`rust/Cargo.toml` 里用 `=` 精确锁定 crate 版本。升级它会改变所有下游用户的转换输出，所以必须走 `build-wasm` workflow 并经过 PR 评审，不是一个自动发生的事。
+
+`rust/Cargo.lock` 也一并提交。`=` 只锁住了 anydoc 本身，真正防止传递依赖在两次重建之间悄悄改变转换输出的，是这个 lockfile。
+
+## 许可证
+
+本包 MIT，见 `LICENSE`。内嵌模块从 [anydoc](https://github.com/firecrawl/anydoc) 构建，同样是 MIT——见 `LICENSE-anydoc`。
