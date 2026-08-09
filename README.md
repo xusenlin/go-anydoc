@@ -85,7 +85,9 @@ of the gap is how a particular runtime turns wasm into machine code:
 | native Rust binary | 0.28 s | 1× |
 | the same wasm, wasmtime with Cranelift | 0.37 s | 1.3× |
 | the same wasm, wasmtime with Winch, a deliberately baseline compiler | 0.90 s | 3.2× |
+| the same wasm, wazy with `WithCompiler` (see below) | 0.75 s | 2.7× |
 | the same wasm, wazero with `WithCompiler` | 3.4 s | 12× |
+| the same wasm, wazy interpreted (see below) | 33 s | 118× |
 | the same wasm, wazero interpreted | 41 s | 146× |
 
 So the things usually blamed — 32-bit pointers, bounds-checked linear memory,
@@ -98,6 +100,37 @@ That is the trade, stated plainly: wasmtime's Go bindings are cgo, so adopting
 them would cost `CGO_ENABLED=0`, free cross-compilation, and the single
 self-contained binary. If your workload values native speed above those, a cgo
 binding is the honest answer and this package is the wrong tool.
+
+### The `experiment/wazy` branch
+
+Most of that gap is not the price of staying in pure Go.
+[wazy](https://github.com/samyfodil/wazy) is a pure-Go runtime descended from
+wazero that spends its effort on the memory-access paths this workload lives
+in, and the [`experiment/wazy`](../../tree/experiment/wazy) branch is this
+package running on it — same API, same embedded module, same exit-code ABI,
+one import changed:
+
+| converting | `main` (wazero) | `experiment/wazy` | |
+|---|---|---|---|
+| 1 KB docx, interpreted | 3.5 ms | 2.7 ms | 1.3× |
+| 1 KB docx, compiled | 0.4 ms | 0.62 ms | 0.6× |
+| 5 MB docx body, interpreted | 11.1 s | 8.6 s | 1.3× |
+| 5 MB docx body, compiled | 0.86 s | 0.19 s | 4.5× |
+| 7.5 MB PDF, interpreted | 41.4 s | 32.6 s | 1.3× |
+| 7.5 MB PDF, compiled | 3.4 s | 0.75 s | 4.5× |
+
+Output is byte-identical, the whole suite passes, and it still cross-compiles
+to riscv64, ppc64le, 386 and s390x. Long compute is where it wins; tiny
+documents are a wash or slightly worse.
+
+It is a branch rather than an option because of what the alternatives cost.
+Selecting a runtime at call time links both engines into every binary,
+measured at **+3.22 MB** for users who only ever use one. A build tag avoids
+that, but either way wazy lands in every downstream module graph — and wazy
+has no stable release: retracted betas, a pseudo-version, one author, and an
+explicit statement that it makes no stability promise. `main` stays on wazero
+so nobody inherits that by accident. Take the branch if you want the speed and
+can carry the risk; it will be revisited if wazy reaches a stable release.
 
 <sub>Measured on Apple M5 Pro, macOS 26.5, Go 1.26.1, wazero v1.12.0, against
 `anydoc.wasm` 6,542,355 bytes (anydoc 0.1.7). The 5 MB figure is a 25,000-row
