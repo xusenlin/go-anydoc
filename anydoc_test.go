@@ -141,6 +141,37 @@ func TestInputGuards(t *testing.T) {
 	}
 }
 
+// Guest memory exhaustion reaches the host in two shapes depending on where
+// it happens, and both have to be recognised: a caller who hits either one
+// needs to be told about WithMemoryLimitPages, not handed a wasm stack trace.
+func TestGuestOutOfMemoryDetection(t *testing.T) {
+	oom := []string{
+		"memory allocation of 2621440 bytes failed", // allocator abort, traps
+		"read stdin: out of memory",                 // shim cannot buffer input, clean exit
+	}
+	for _, s := range oom {
+		if !guestOutOfMemory(s) {
+			t.Errorf("not recognised as out of memory: %q", s)
+		}
+	}
+
+	notOOM := []string{
+		"",
+		"malformed document: bad central directory",
+		"unsupported input: nothing matched",
+		"missing required part: word/document.xml",
+		// A document whose own guard tripped is a document problem, and must
+		// keep mapping to ErrResourceLimit rather than being rewritten into
+		// advice about the host's memory setting.
+		"resource limit exceeded: declared size implausible",
+	}
+	for _, s := range notOOM {
+		if guestOutOfMemory(s) {
+			t.Errorf("wrongly treated as out of memory: %q", s)
+		}
+	}
+}
+
 func TestCloseIsIdempotent(t *testing.T) {
 	c := newStub(t)
 	ctx := context.Background()

@@ -235,6 +235,45 @@ func TestRealWithCompiler(t *testing.T) {
 	}
 }
 
+// A guest that exhausts its linear memory traps as a bare "unreachable" with
+// a wasm stack trace attached. On its own that tells a caller nothing about
+// the single setting that would fix it, so the error has to name the limit
+// and the option.
+func TestRealGuestOutOfMemory(t *testing.T) {
+	// A 2 MB body needs about 576 pages; 192 is comfortably under that while
+	// still clearing the module's own 64-page floor, so New succeeds and the
+	// failure happens where this test wants it, during conversion.
+	c, err := New(WithMemoryLimitPages(192))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer c.Close(context.Background())
+
+	cells := make([][2]string, 10000)
+	for i := range cells {
+		cells[i] = [2]string{"某个中文单元格内容用来撑大文档体积", "另一个中文单元格内容用来撑大文档体积"}
+	}
+	in := minimalDocx(t, "大文档", cells)
+
+	_, err = c.Convert(context.Background(), in, "docx")
+	if err == nil {
+		t.Fatal("expected the guest to run out of memory")
+	}
+	if !errors.Is(err, ErrWASM) {
+		t.Fatalf("got %v, want ErrWASM", err)
+	}
+	msg := err.Error()
+	for _, want := range []string{"ran out of memory", "192 page", "WithMemoryLimitPages"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error does not mention %q: %s", want, msg)
+		}
+	}
+	// The wasm stack trace is noise once the cause is known.
+	if strings.Contains(msg, "wasm stack trace") {
+		t.Errorf("stack trace not suppressed: %s", msg)
+	}
+}
+
 // Info is what host applications print for provenance, so the embedded build
 // has to report a version and a non-trivial payload.
 func TestRealInfo(t *testing.T) {

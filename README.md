@@ -114,7 +114,7 @@ Go module either way.
 ```go
 anydoc.New(
     anydoc.WithConcurrency(4),        // simultaneous guests; the main memory lever
-    anydoc.WithMemoryLimitPages(512), // 32 MiB per guest
+    anydoc.WithMemoryLimitPages(1024), // 64 MiB per guest
     anydoc.WithMaxInputBytes(64<<20),
     anydoc.WithCompiler(),            // throughput over startup cost; see below
 )
@@ -140,8 +140,8 @@ either way: wazero is pure Go, and this option changes no build constraints.
 `New` time, not at conversion time — setting it too low fails fast with a clear
 message rather than surfacing later as a mysterious conversion error.
 
-How much a guest actually needs tracks the *uncompressed* document body, at
-roughly 15–30× its size — a zip bomb is small on disk and large in memory,
+How much a guest actually needs tracks the *uncompressed* content, not the
+size of the file on disk — a zip bomb is small on disk and large in memory,
 which is why the limit exists:
 
 | document | pages needed |
@@ -149,12 +149,14 @@ which is why the limit exists:
 | module minimum, converts nothing | 64 (4 MiB) |
 | docx, 0.4 MB body | 192 (12 MiB) |
 | docx, 2 MB body | 576 (36 MiB) |
+| PDF, 7.5 MB file | 512–1024 (32–64 MiB) |
 | docx, 5 MB body | 1280 (80 MiB) |
 
-The default of 512 pages covers a body of roughly 2 MB, which is most office
-documents. Raise it if conversions fail with `ErrWASM` on inputs that convert
-fine elsewhere; each concurrent guest can claim up to this much, so the product
-of `WithConcurrency` and this value is your real memory ceiling.
+The default of 1024 pages converts an ordinary 7.5 MB PDF. Raise it if
+conversions fail on inputs that convert fine elsewhere — the error says so
+explicitly when the guest ran out of memory, and names this option. Each
+concurrent guest can claim up to this much, so `WithConcurrency` multiplied by
+this value is your real ceiling.
 
 ## Development
 

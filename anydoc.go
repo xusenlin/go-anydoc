@@ -35,6 +35,7 @@ type Converter struct {
 	compiled wazero.CompiledModule
 	gate     chan struct{}
 	maxBytes int
+	pages    uint32 // kept so a guest OOM can name the limit it hit
 
 	closeOnce sync.Once
 	closeErr  error
@@ -116,6 +117,7 @@ func New(opts ...Option) (*Converter, error) {
 		compiled: compiled,
 		gate:     make(chan struct{}, cfg.concurrency),
 		maxBytes: cfg.maxInputBytes,
+		pages:    cfg.memoryPages,
 	}, nil
 }
 
@@ -167,22 +169,33 @@ func (c *Converter) Convert(ctx context.Context, doc []byte, hint string) (strin
 	}
 
 	if err != nil {
+		guestErr := strings.TrimSpace(stderr.String())
+
 		// wazero reports a command module's exit through sys.ExitError,
 		// including a clean exit(0) in some paths, so check the code before
 		// treating this as a failure.
 		var exitErr *sys.ExitError
 		if errors.As(err, &exitErr) {
 			if code := exitErr.ExitCode(); code != 0 {
-				return "", errorForExit(int(code), strings.TrimSpace(stderr.String()))
+				// Running out of guest memory can surface either as a clean
+				// exit from the shim or as a trap below. Both mean the same
+				// thing to a caller, so answer them the same way.
+				if guestOutOfMemory(guestErr) {
+					return "", errGuestOutOfMemory(c.pages, guestErr)
+				}
+				return "", errorForExit(int(code), guestErr)
 			}
 			return stdout.String(), nil
 		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return "", ctxErr
 		}
+		if guestOutOfMemory(guestErr) {
+			return "", errGuestOutOfMemory(c.pages, guestErr)
+		}
 		return "", &ConvertError{
 			Kind:   ErrWASM,
-			Detail: fmt.Sprintf("%v; guest stderr: %s", err, strings.TrimSpace(stderr.String())),
+			Detail: fmt.Sprintf("%v; guest stderr: %s", err, guestErr),
 		}
 	}
 

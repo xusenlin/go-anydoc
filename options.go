@@ -18,7 +18,7 @@ func defaultConfig() config {
 		// Conservative on purpose: this package ends up inside self-hosted
 		// binaries running on whatever machine the user has.
 		concurrency:   4,
-		memoryPages:   512,              // 512 * 64 KiB = 32 MiB per guest
+		memoryPages:   1024,             // 1024 * 64 KiB = 64 MiB per guest
 		maxInputBytes: 64 * 1024 * 1024, // 64 MiB
 	}
 }
@@ -60,13 +60,18 @@ func WithConcurrency(n int) Option {
 }
 
 // WithMemoryLimitPages caps one guest's linear memory in 64 KiB pages.
-// Default 512 (32 MiB).
+// Default 1024 (64 MiB).
 //
-// What a guest needs tracks the uncompressed document body at roughly 15-30x
-// its size, not the input's size on disk. Measured against the real module: 64
-// pages is the module's own floor and converts nothing, a 0.4 MB body needs
-// 192, a 2 MB body 576, a 5 MB body 1280. Raise this if conversions fail with
-// ErrWASM on inputs that convert fine elsewhere.
+// What a guest needs tracks the uncompressed content rather than the input's
+// size on disk, so a compact file can still be expensive. Measured against the
+// real module: 64 pages is the module's own floor and converts nothing, a
+// docx with a 0.4 MB body needs 192, a 2 MB body 576, a 5 MB body 1280, and a
+// 7.5 MB PDF needs between 512 and 1024.
+//
+// Raise this when conversions fail with ErrWASM on inputs that convert fine
+// elsewhere; the error says so explicitly when the guest ran out of memory.
+// Each concurrent guest can claim up to this much, so this multiplied by
+// WithConcurrency is the real ceiling.
 //
 // Validated at New time against the module's declared minimum, so too low a
 // value fails immediately rather than at conversion.

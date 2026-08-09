@@ -3,6 +3,7 @@ package anydoc
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // Sentinel errors returned by Convert. Match them with errors.Is.
@@ -68,6 +69,37 @@ const (
 	exitIO            = 7
 	exitBadHint       = 8
 )
+
+// guestOutOfMemory reports whether the guest died allocating rather than
+// failing on the document. It takes two shapes, same cause and same fix:
+//
+//   - "memory allocation of N bytes failed": Rust's allocation-failure handler
+//     aborting mid-conversion, which reaches the host as an unreachable trap
+//     with a wasm stack trace attached.
+//   - "read stdin: out of memory": the shim could not even buffer the input,
+//     so it exits cleanly with the io code instead of trapping.
+//
+// Both are worth naming, because neither raw form mentions the one setting
+// that would fix it.
+func guestOutOfMemory(stderr string) bool {
+	if strings.Contains(stderr, "out of memory") {
+		return true
+	}
+	return strings.Contains(stderr, "memory allocation of") &&
+		strings.Contains(stderr, "failed")
+}
+
+// errGuestOutOfMemory explains the limit that was hit and how to raise it.
+func errGuestOutOfMemory(pages uint32, stderr string) error {
+	return &ConvertError{
+		Kind: ErrWASM,
+		Detail: fmt.Sprintf(
+			"the guest ran out of memory at its %d page limit (%d MiB); "+
+				"raise it with WithMemoryLimitPages, remembering that each "+
+				"concurrent guest can claim that much (guest said: %s)",
+			pages, pages/16, stderr),
+	}
+}
 
 func errorForExit(code int, stderr string) error {
 	var kind error

@@ -82,7 +82,7 @@ go build -tags anydoc_nowasm    # 省下 4.87 MB
 ```go
 anydoc.New(
     anydoc.WithConcurrency(4),        // 同时运行的 guest 数，控制峰值内存的主要手段
-    anydoc.WithMemoryLimitPages(512), // 单个 guest 32 MiB
+    anydoc.WithMemoryLimitPages(1024), // 单个 guest 64 MiB
     anydoc.WithMaxInputBytes(64<<20),
     anydoc.WithCompiler(),            // 用启动成本换吞吐，见下
 )
@@ -100,16 +100,17 @@ anydoc.New(
 
 `WithMemoryLimitPages` 是在 `New` 时对照模块声明的最小内存校验的，**不是转换时**——设太低会立刻报错并说明原因，而不是过一会儿变成一个莫名其妙的转换失败。
 
-单个 guest 实际需要多少内存，取决于**解压后**的正文体积，大约是它的 15–30 倍——zip 炸弹在磁盘上很小、在内存里很大，这个上限就是为此存在的：
+单个 guest 实际需要多少内存，取决于**解压后**的内容体积，而不是文件在磁盘上的大小——zip 炸弹在磁盘上很小、在内存里很大，这个上限就是为此存在的：
 
 | 文档 | 所需页数 |
 |---|---|
 | 模块最小值，什么都转不了 | 64（4 MiB） |
 | docx，正文 0.4 MB | 192（12 MiB） |
 | docx，正文 2 MB | 576（36 MiB） |
+| PDF，文件 7.5 MB | 512–1024（32–64 MiB） |
 | docx，正文 5 MB | 1280（80 MiB） |
 
-默认 512 页大约覆盖 2 MB 正文，绝大多数办公文档都在这个范围内。如果某些文档在别处能转、在这里报 `ErrWASM`，就调高它。注意每个并发 guest 都可能占满这个额度，所以 `WithConcurrency` 乘以这个值才是你真正的内存上限。
+默认 1024 页能转换一份普通的 7.5 MB PDF。如果某些文档在别处能转、在这里失败，就调高它——guest 内存耗尽时错误信息会明确说明，并点名这个选项。注意每个并发 guest 都可能占满这个额度，所以 `WithConcurrency` 乘以这个值才是你真正的内存上限。
 
 ## 开发
 
