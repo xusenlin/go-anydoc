@@ -75,11 +75,29 @@ compiled, so if you convert those, either bound the tail with
 `WithMaxInputBytes` and a context deadline — cancellation interrupts the guest
 mid-conversion — or opt into `WithCompiler`.
 
-For reference, the same conversion in a natively compiled Rust binary takes
-0.29 s. Roughly 12× of the gap to that is wazero's compiler being a fast
-baseline JIT rather than an optimising one, and the rest is interpretation.
-Closing it entirely means cgo, which is the trade this package exists to
-avoid.
+**The slowness is the runtime, not wasm.** It is tempting to read the numbers
+above as the cost of compiling to WebAssembly. Measured on the same PDF and the
+same `anydoc.wasm`, it is not — the format costs almost nothing, and nearly all
+of the gap is how a particular runtime turns wasm into machine code:
+
+| running the same 7.5 MB PDF | | vs native |
+|---|---|---|
+| native Rust binary | 0.28 s | 1× |
+| the same wasm, wasmtime with Cranelift | 0.37 s | 1.3× |
+| the same wasm, wasmtime with Winch, a deliberately baseline compiler | 0.90 s | 3.2× |
+| the same wasm, wazero with `WithCompiler` | 3.4 s | 12× |
+| the same wasm, wazero interpreted | 41 s | 146× |
+
+So the things usually blamed — 32-bit pointers, bounds-checked linear memory,
+no native SIMD — account for the 1.3×. Everything beyond that is code
+generation. wazero's compiler is fast, simple and portable rather than
+optimising, which is precisely what buys pure Go with no cgo and no
+platform-specific backend to ship.
+
+That is the trade, stated plainly: wasmtime's Go bindings are cgo, so adopting
+them would cost `CGO_ENABLED=0`, free cross-compilation, and the single
+self-contained binary. If your workload values native speed above those, a cgo
+binding is the honest answer and this package is the wrong tool.
 
 <sub>Measured on Apple M5 Pro, macOS 26.5, Go 1.26.1, wazero v1.12.0, against
 `anydoc.wasm` 6,542,355 bytes (anydoc 0.1.7). The 5 MB figure is a 25,000-row
