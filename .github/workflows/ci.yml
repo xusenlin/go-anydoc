@@ -2,35 +2,21 @@ name: ci
 on: [push, pull_request]
 
 jobs:
-  # The harness, against the Go-built stub. Runs under anydoc_nowasm so the
-  # no-embed code path is exercised on every push.
-  harness:
+  # Runs exactly the task the maintainer runs locally before tagging, so CI
+  # and the release checklist cannot drift apart: version consistency, the
+  # stub harness suite, the committed module's checksum, formatting, vet under
+  # both build tags, and the real conversion suite.
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with: { go-version: '1.22' }
-      - name: Check formatting
-        run: |
-          unformatted=$(gofmt -l .)
-          if [ -n "$unformatted" ]; then echo "$unformatted"; exit 1; fi
-      - name: Build stub module
-        run: GOOS=wasip1 GOARCH=wasm go build -o testdata/stub.wasm ./internal/stub
-      - run: go vet -tags anydoc_nowasm ./...
-      - run: go test -race -tags anydoc_nowasm ./...
-
-  # Real conversions against the committed anydoc.wasm. This is the suite that
-  # catches the module and errors.go drifting apart.
-  conversion:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with: { go-version: '1.22' }
-      - name: Verify the committed module matches its checksum
-        run: sha256sum -c anydoc.wasm.sha256
-      - run: go vet ./...
-      - run: go test -race ./...
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: task verify
 
   cross:
     runs-on: ubuntu-latest

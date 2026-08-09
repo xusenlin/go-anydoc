@@ -158,9 +158,12 @@ of `WithConcurrency` and this value is your real memory ceiling.
 
 ## Development
 
+Tasks are run with [Task](https://taskfile.dev); `task --list` shows them all.
+
 ```
-make test    # builds the wasip1 test stub, runs the suite
-make wasm    # rebuilds the real module; needs Rust 1.88 + wasm32-wasip1
+task test      # builds the wasip1 test stub, runs the harness suite
+task verify    # everything CI runs, and the checklist before tagging
+task wasm      # rebuilds the embedded module; needs Rust 1.88 + wasm-opt
 ```
 
 There are two suites, split by build tag:
@@ -177,16 +180,22 @@ There are two suites, split by build tag:
 
 `anydoc.wasm` is a build artifact committed to the repo, because Go modules
 have no build step: whatever is committed is what `go get` delivers. It is
-built from the pinned crate by `make wasm` or the `build-wasm` workflow, and
-`anydoc.wasm.sha256` records the checksum of the committed copy.
+built from the pinned crate by `task wasm`, run by hand rather than by CI, and
+`anydoc.wasm.sha256` records the checksum of the committed copy. See
+`anydoc.wasm.README` for the toolchain versions needed to reproduce it.
 
 ## Versioning
 
-`anydoc.EmbeddedAnydocVersion` reports the upstream crate version this module
-was built from; `anydoc.Info()` prints it with the payload size. The crate is
-pinned with `=` in `rust/Cargo.toml`: bumping it changes conversion output for
-every downstream user, so it goes through the `build-wasm` workflow and a
-reviewed PR.
+This module's version is independent of the crate's. The crate is pinned with
+`=` in `rust/Cargo.toml`, and moving to a new upstream release is a deliberate
+act: edit the pin, run `task wasm`, review what changed in the conversion
+output, then tag. An upstream release on its own changes nothing here.
+
+`anydoc.EmbeddedAnydocVersion` reports which crate version the embedded module
+was built from, and `anydoc.Info()` prints it with the payload size. It is
+copied from `rust/Cargo.lock` by `task sync-version`, and `task check-version`
+fails the build if the two ever disagree — so it cannot quietly misreport what
+is actually embedded.
 
 `rust/Cargo.lock` is committed too. The `=` pin only fixes anydoc itself; the
 lockfile is what stops a transitive dependency from silently changing the

@@ -1,6 +1,6 @@
 # testdata
 
-`stub.wasm` is generated, not committed — run `make stub`.
+`stub.wasm` is generated, not committed — run `task stub`.
 
 It is a Go program built for `wasip1/wasm` that implements the same ABI as
 `rust/src/main.rs` (stdin in, Markdown out, error kind as exit code) without

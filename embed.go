@@ -12,7 +12,8 @@ import _ "embed"
 var embeddedWASM []byte
 
 // EmbeddedAnydocVersion is the upstream crate version this wasm was built from.
-// Kept in sync by .github/workflows/build-wasm.yml.
+// Copied from rust/Cargo.lock by `task sync-version`; `task check-version`
+// fails the build if the two drift apart.
 const EmbeddedAnydocVersion = "0.1.7"
 
 const wasmEmbedded = true

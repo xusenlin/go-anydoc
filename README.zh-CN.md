@@ -113,9 +113,12 @@ anydoc.New(
 
 ## 开发
 
+用 [Task](https://taskfile.dev) 驱动，`task --list` 列出全部任务。
+
 ```
-make test    # 构建 wasip1 测试 stub，跑测试套件
-make wasm    # 重新构建真实模块，需要 Rust 1.88 + wasm32-wasip1
+task test      # 构建 wasip1 测试 stub，跑宿主层测试套件
+task verify    # CI 跑的全部检查，也是打 tag 前的清单
+task wasm      # 重新构建内嵌模块，需要 Rust 1.88 + wasm-opt
 ```
 
 测试分成两套，用 build tag 隔开：
@@ -123,13 +126,13 @@ make wasm    # 重新构建真实模块，需要 Rust 1.88 + wasm32-wasip1
 - `anydoc_test.go` 在 `-tags anydoc_nowasm` 下跑，对象是用 Go 自己的 `wasip1` target 编出来的 stub。stub 遵守同样的 ABI 但不做任何转换，所以整个宿主层——stdio 接线、退出码映射、并发、取消、内存隔离——**没有 Rust 工具链也能测**。详见 `testdata/README.md`。
 - `anydoc_real_test.go` 打的是 `!anydoc_nowasm` tag，因此**有 `anydoc.wasm` 时才会被编译**，测的是这套东西真正要干的活：真实转换输出、格式识别，以及 crate 实际会吐出的错误码。
 
-`anydoc.wasm` 是提交进仓库的构建产物——Go module 没有构建步骤，提交进去的是什么，下游 `go get` 拿到的就是什么。它由 `make wasm` 或 `build-wasm` workflow 从锁定版本的 crate 构建，`anydoc.wasm.sha256` 记录当前这份的校验和。
+`anydoc.wasm` 是提交进仓库的构建产物——Go module 没有构建步骤，提交进去的是什么，下游 `go get` 拿到的就是什么。它由 `task wasm` 从锁定版本的 crate 构建，是手工执行而非 CI 自动完成的，`anydoc.wasm.sha256` 记录当前这份的校验和。复现它所需的工具链版本见 `anydoc.wasm.README`。
 
 ## 版本管理
 
-`anydoc.EmbeddedAnydocVersion` 报告当前模块是从哪个上游 crate 版本构建的；`anydoc.Info()` 把它和载荷大小一起打印出来。
+**本模块的版本号和上游 crate 的版本号相互独立。** `rust/Cargo.toml` 里用 `=` 精确锁定 crate 版本，换到新的上游版本是一个有意识的动作：改 pin，跑 `task wasm`，评审转换输出发生了什么变化，然后打 tag。上游自己发新版，对这个仓库没有任何影响。
 
-`rust/Cargo.toml` 里用 `=` 精确锁定 crate 版本。升级它会改变所有下游用户的转换输出，所以必须走 `build-wasm` workflow 并经过 PR 评审，不是一个自动发生的事。
+`anydoc.EmbeddedAnydocVersion` 报告内嵌模块是从哪个 crate 版本构建的，`anydoc.Info()` 把它和载荷大小一起打印。它由 `task sync-version` 从 `rust/Cargo.lock` 单向复制而来，`task check-version` 会在两者不一致时让构建失败——所以它不可能悄悄谎报实际内嵌的是什么。
 
 `rust/Cargo.lock` 也一并提交。`=` 只锁住了 anydoc 本身，真正防止传递依赖在两次重建之间悄悄改变转换输出的，是这个 lockfile。
 

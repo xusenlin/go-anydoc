@@ -1,0 +1,98 @@
+version: '3'
+
+vars:
+  # macOS ships shasum, not sha256sum.
+  SHA256:
+    sh: command -v sha256sum >/dev/null 2>&1 && echo sha256sum || echo 'shasum -a 256'
+
+  # The crate version has one source of truth: whatever cargo actually
+  # resolved, recorded in rust/Cargo.lock. embed.go's constant is copied from
+  # there rather than maintained by hand, so the version a user sees in Info()
+  # is the version the module was really built from.
+  ANYDOC_VERSION:
+    sh: |
+      sed -n '/^name = "anydoc"$/{n;s/^version = "\(.*\)"$/\1/p;}' rust/Cargo.lock
+
+tasks:
+  default:
+    desc: List available tasks
+    cmds:
+      - task --list
+    silent: true
+
+  stub:
+    desc: Build the wasip1 test stub the harness suite runs against
+    # Same ABI as rust/src/main.rs, converts nothing. Lets the harness be
+    # tested with no Rust toolchain in the loop.
+    sources:
+      - internal/stub/main.go
+    generates:
+      - testdata/stub.wasm
+    cmds:
+      - GOOS=wasip1 GOARCH=wasm go build -o testdata/stub.wasm ./internal/stub
+
+  test:
+    desc: Run the harness suite against the stub
+    # Under anydoc_nowasm, so it works without a real anydoc.wasm in the tree
+    # and the no-embed code path is exercised too.
+    deps: [stub]
+    cmds:
+      - go test -race -tags anydoc_nowasm ./...
+
+  wasm:
+    desc: Rebuild the embedded module (needs Rust 1.88 + wasm32-wasip1 + wasm-opt)
+    # To move to a new upstream release, edit the `=` pin in rust/Cargo.toml
+    # and run this: cargo re-resolves Cargo.lock and sync-version carries the
+    # new version into embed.go. Nothing here is automatic, because a rebuilt
+    # module changes conversion output for every downstream user.
+    cmds:
+      - cargo build --release --target wasm32-wasip1 --manifest-path rust/Cargo.toml
+      - >-
+        wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int
+        -o anydoc.wasm rust/target/wasm32-wasip1/release/anydoc-wasi.wasm
+      - '{{.SHA256}} anydoc.wasm > anydoc.wasm.sha256'
+      - task: sync-version
+      - echo "built anydoc.wasm from anydoc {{.ANYDOC_VERSION}}"
+      - ls -l anydoc.wasm
+
+  sync-version:
+    desc: Copy the resolved crate version from Cargo.lock into embed.go
+    # Not sed -i: that spelling differs between BSD and GNU.
+    preconditions:
+      - sh: test -n "{{.ANYDOC_VERSION}}"
+        msg: "could not read the anydoc version from rust/Cargo.lock"
+    cmds:
+      - sed 's/^const EmbeddedAnydocVersion = .*/const EmbeddedAnydocVersion = "{{.ANYDOC_VERSION}}"/' embed.go > embed.go.tmp
+      - mv embed.go.tmp embed.go
+      - grep EmbeddedAnydocVersion embed.go
+
+  check-version:
+    desc: Fail if embed.go and Cargo.lock disagree about the embedded version
+    # Drift here would make Info() lie about what is embedded. Cheap enough to
+    # run on every push.
+    preconditions:
+      - sh: test -n "{{.ANYDOC_VERSION}}"
+        msg: "could not read the anydoc version from rust/Cargo.lock"
+      - sh: grep -q '^const EmbeddedAnydocVersion = "{{.ANYDOC_VERSION}}"$' embed.go
+        msg: "embed.go does not match rust/Cargo.lock (anydoc {{.ANYDOC_VERSION}}); run: task sync-version"
+    cmds:
+      - 'echo "embed.go matches rust/Cargo.lock: anydoc {{.ANYDOC_VERSION}}"'
+
+  verify:
+    desc: Everything that has to hold before tagging a release
+    cmds:
+      - task: check-version
+      - task: test
+      - '{{.SHA256}} -c anydoc.wasm.sha256'
+      - gofmt -l . | (! grep .)
+      - go vet ./...
+      - go vet -tags anydoc_nowasm ./...
+      - go test -race ./...
+      - echo "ok - ready to tag"
+
+  clean:
+    desc: Remove build output
+    cmds:
+      - rm -f testdata/stub.wasm embed.go.tmp
+      - cargo clean --manifest-path rust/Cargo.toml
+    ignore_error: true

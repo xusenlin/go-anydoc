@@ -6,3 +6,6 @@ testdata/stub.wasm
 .idea/
 .vscode/
 .DS_Store
+
+# Task runner fingerprint cache
+.task/

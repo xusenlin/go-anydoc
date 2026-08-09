@@ -6,14 +6,31 @@ committed, rather than produced on each install.
 
   what      wasm32-wasip1 command module
   source    rust/src/main.rs, wrapping the anydoc crate pinned in rust/Cargo.toml
-  built by  `make wasm` (Rust 1.88 + wasm32-wasip1, then wasm-opt -Oz)
-            or the build-wasm workflow, which opens a PR
+  built by  `task wasm`, run by hand on a maintainer's machine
   checksum  anydoc.wasm.sha256
   version   embed.go's EmbeddedAnydocVersion, reported by anydoc.Info()
 
 Rebuilding it changes conversion output for every downstream user, which is why
-the crate version is pinned with `=` and bumping it goes through a reviewed PR.
+the crate version is pinned with `=` and the rebuild is a deliberate manual
+step rather than something CI does.
 
-To develop against the harness without a Rust toolchain, use `make test`: it
-builds a Go wasip1 stub speaking the same ABI and runs the suite under
--tags anydoc_nowasm.
+Reproducing the committed module
+--------------------------------
+
+It is built locally, not by CI, so the checksum is the thing to check rather
+than a build log. Everything needed to reproduce it is in the repository:
+rust/Cargo.toml pins the crate, rust/Cargo.lock pins every transitive
+dependency, and the exact toolchain that produced the current artifact was:
+
+  rustc 1.88.0 (6b00bc388 2025-06-23)
+  wasm-opt version 131 (binaryen)
+
+With those, `task wasm` followed by `task verify` should reproduce the same
+bytes and the same checksum. If it does not, the difference is worth
+understanding before trusting the committed copy.
+
+Developing without Rust
+-----------------------
+
+Use `task test`: it builds a Go wasip1 stub that speaks the same ABI and runs
+the harness suite under -tags anydoc_nowasm. No Rust toolchain needed.
