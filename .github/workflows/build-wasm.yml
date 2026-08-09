@@ -11,6 +11,13 @@ on:
         required: true
         default: "0.1.7"
 
+# Needed by create-pull-request. Repo settings must also have
+# "Allow GitHub Actions to create and approve pull requests" enabled,
+# under Settings -> Actions -> General -> Workflow permissions.
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -74,3 +81,4 @@ jobs:
             anydoc.wasm.sha256
             embed.go
             rust/Cargo.toml
+            rust/Cargo.lock
