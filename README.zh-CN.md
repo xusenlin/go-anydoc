@@ -16,6 +16,8 @@ CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build ./...
 go get github.com/xusenlin/go-anydoc
 ```
 
+需要 Go 1.25 或更高版本，这是 wazero 的要求。
+
 ## 用法
 
 ```go
@@ -48,14 +50,17 @@ case errors.Is(err, anydoc.ErrMalformed):    // 格式认得出但内容损坏
 
 | | 解释器（默认） | 编译器（`WithCompiler`） |
 |---|---|---|
-| `New()`——每进程一次 | 约 85 ms | 约 2.1 s |
-| 1 KB docx | 5.0 ms | 1.0 ms |
-| 解压后正文 5 MB 的 docx | 16.9 s | 1.1 s |
-| `New()` 之后的 RSS | 135 MB | 576 MB |
+| `New()`——每进程一次 | 约 100 ms | 约 2.7 s |
+| 1 KB docx | 3.5 ms | 0.4 ms |
+| 解压后正文 5 MB 的 docx | 11.1 s | 0.86 s |
+| 7.5 MB PDF | 41.4 s | 3.4 s |
+| `New()` 之后的 RSS | 182 MB | 638 MB |
 
-常规办公文档落在第二行，几毫秒，没有优化价值。上兆字节的文档则比编译模式慢约 **16 倍**——如果你要处理这类文档，要么用 `WithMaxInputBytes` 加 context 超时把长尾兜住（取消会当场打断 guest），要么显式打开 `WithCompiler`。
+常规办公文档落在第二行，几毫秒，没有优化价值。上兆字节的文档则比编译模式慢约 **12 倍**——如果你要处理这类文档，要么用 `WithMaxInputBytes` 加 context 超时把长尾兜住（取消会当场打断 guest），要么显式打开 `WithCompiler`。
 
-<sub>实测环境：Apple M5 Pro，macOS 26.5，Go 1.26.1，wazero v1.9.0，`anydoc.wasm` 5,069,778 字节（anydoc 0.1.7）。5 MB 那一行是 2.5 万行表格，zip 后只有 42 KB——真正决定耗时的是解压后的正文体积，不是文件大小。</sub>
+作为参照，同一份文档用原生编译的 Rust 二进制转换只要 0.29 秒。这中间约 12 倍的差距来自 wazero 的编译器是**快速基线 JIT 而非优化编译器**，其余是解释执行的代价。要彻底抹平只能上 cgo，而那正是本包存在的意义所要避开的取舍。
+
+<sub>实测环境：Apple M5 Pro，macOS 26.5，Go 1.26.1，wazero v1.12.0，`anydoc.wasm` 6,542,355 字节（anydoc 0.1.7）。5 MB 那一行是 2.5 万行表格，zip 后只有 42 KB——真正决定耗时的是解压后的正文体积，不是文件大小。</sub>
 
 **每份文档一个全新 guest。** 每次 `Convert` 都新建独立的线性内存，所以一份大文档不会让内存被永久占住，一份畸形文档也不会把状态泄漏给下一次调用。真正昂贵的编译只在 `New` 里做一次。
 
@@ -68,12 +73,12 @@ case errors.Is(err, anydoc.ErrMalformed):    // 格式认得出但内容损坏
 默认内嵌模块，`go get` 完 `New()` 就能跑。想把载荷单独分发的：
 
 ```
-go build -tags anydoc_nowasm    # 省下 4.87 MB
+go build -tags anydoc_nowasm    # 省下 6.59 MB
 ```
 
 此时 `embeddedWASM` 为 nil，`New` 要求必须传 `WithWASM(r)` 或 `WithWASMBytes(b)`。适用于容器分层、Serverless 部署包大小限制、锁定另一个 anydoc 构建，或者禁止二进制内嵌不可追溯 blob 的合规环境。
 
-省下的是 4.83 MB 的模块本身，再加上约 35 KB 的 `embed` 机制开销。给个体感：`examples/convert` 正常编译 12.4 MB，加上这个 tag 是 7.3 MB。
+省下的是 6.54 MB 的模块本身，再加上约 47 KB 的 `embed` 机制开销。给个体感：`examples/convert` 正常编译 14.1 MB，加上这个 tag 是 7.6 MB。
 
 注意 build tag 只影响编译产物，不影响 `go get`——模块文件在 Go module 里躺着，两种情况都要下载。
 

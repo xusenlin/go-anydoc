@@ -25,6 +25,11 @@ dependency, and the exact toolchain that produced the current artifact was:
   rustc 1.88.0 (6b00bc388 2025-06-23)
   wasm-opt version 131 (binaryen)
 
+Both the crate profile (opt-level 3) and wasm-opt (-O3) optimise for speed
+rather than size. That is deliberate and measured: the interpreter executes
+wasm instructions one at a time, so a smaller module is a slower one. Building
+for size instead costs about 47% of interpreted throughput to save 1.47 MB.
+
 With those, `task wasm` followed by `task verify` should reproduce the same
 bytes and the same checksum. If it does not, the difference is worth
 understanding before trusting the committed copy.

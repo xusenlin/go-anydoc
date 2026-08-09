@@ -16,7 +16,13 @@ name = "anydoc-wasi"
 path = "src/main.rs"
 
 [profile.release]
-opt-level = "z"     # size over speed; wazero's interpreter dominates runtime anyway
+# Speed over size. The tempting reasoning -- that the interpreter's dispatch
+# overhead swamps whatever the optimiser does, so optimise for size instead --
+# is wrong. The interpreter executes wasm instructions one at a time, so fewer
+# and cheaper instructions turn almost directly into less work. Measured on a
+# 7.5 MB PDF: opt-level 3 against "z" is 47% faster interpreted and 36% faster
+# compiled, and costs 1.47 MB of module size.
+opt-level = 3
 lto = "fat"
 codegen-units = 1
 panic = "abort"     # no unwinding tables in the wasm

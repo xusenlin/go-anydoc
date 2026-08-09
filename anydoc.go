@@ -71,15 +71,15 @@ func New(opts ...Option) (*Converter, error) {
 	//     identically on riscv64, ppc64le, 386 and anything else Go targets.
 	//  2. The compiler needs mmap'd executable pages, which macOS hardened
 	//     runtime and some seccomp profiles refuse. The interpreter never asks.
-	//  3. Compiling this module costs ~2.1s and 576 MB of RSS, against ~85ms
-	//     and 135 MB to interpret it. A library cannot assume it may pre-warm
-	//     a compilation cache on the user's machine, and 576 MB is an OOM kill
+	//  3. Compiling this module costs ~2.7s and 638 MB of RSS, against ~100ms
+	//     and 182 MB to interpret it. A library cannot assume it may pre-warm
+	//     a compilation cache on the user's machine, and 638 MB is an OOM kill
 	//     in a 512 MB container.
 	//
 	// The cost is throughput, and it scales with document size rather than
 	// being a flat overhead: measured on the real module, a 1 KB docx takes
-	// 5ms interpreted against 0.8ms compiled, but a docx with a 5 MB
-	// uncompressed body takes 16s against 1.1s. Small documents are free;
+	// 3.5ms interpreted against 0.4ms compiled, but a docx with a 5 MB
+	// uncompressed body takes 11s against 0.9s. Small documents are free;
 	// multi-megabyte ones are not. Callers who need the throughput and can
 	// afford the memory opt in with WithCompiler; everyone else bounds the
 	// tail with WithMaxInputBytes and a context deadline.

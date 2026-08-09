@@ -47,8 +47,10 @@ tasks:
     # module changes conversion output for every downstream user.
     cmds:
       - cargo build --release --target wasm32-wasip1 --manifest-path rust/Cargo.toml
+      # -O3 to match the crate's opt-level: the interpreter pays for every
+      # instruction, so size optimisation here costs real conversion time.
       - >-
-        wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int
+        wasm-opt -O3 --enable-bulk-memory --enable-nontrapping-float-to-int
         -o anydoc.wasm rust/target/wasm32-wasip1/release/anydoc-wasi.wasm
       - '{{.SHA256}} anydoc.wasm > anydoc.wasm.sha256'
       - task: sync-version

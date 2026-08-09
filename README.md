@@ -19,6 +19,8 @@ CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build ./...
 go get github.com/xusenlin/go-anydoc
 ```
 
+Requires Go 1.25 or newer, which is what wazero requires.
+
 ## Usage
 
 ```go
@@ -61,19 +63,26 @@ corpus before assuming it is free:
 
 | | interpreter (default) | compiler (`WithCompiler`) |
 |---|---|---|
-| `New()` — once per process | ~85 ms | ~2.1 s |
-| 1 KB docx | 5.0 ms | 1.0 ms |
-| docx with a 5 MB uncompressed body | 16.9 s | 1.1 s |
-| RSS after `New()` | 135 MB | 576 MB |
+| `New()` — once per process | ~100 ms | ~2.7 s |
+| 1 KB docx | 3.5 ms | 0.4 ms |
+| docx with a 5 MB uncompressed body | 11.1 s | 0.86 s |
+| 7.5 MB PDF | 41.4 s | 3.4 s |
+| RSS after `New()` | 182 MB | 638 MB |
 
 Ordinary office documents are in the second row's territory and cost nothing
-worth optimising. Multi-megabyte ones are ~16× slower than they would be
+worth optimising. Multi-megabyte ones are ~12× slower than they would be
 compiled, so if you convert those, either bound the tail with
 `WithMaxInputBytes` and a context deadline — cancellation interrupts the guest
 mid-conversion — or opt into `WithCompiler`.
 
-<sub>Measured on Apple M5 Pro, macOS 26.5, Go 1.26.1, wazero v1.9.0, against
-`anydoc.wasm` 5,069,778 bytes (anydoc 0.1.7). The 5 MB figure is a 25,000-row
+For reference, the same conversion in a natively compiled Rust binary takes
+0.29 s. Roughly 12× of the gap to that is wazero's compiler being a fast
+baseline JIT rather than an optimising one, and the rest is interpretation.
+Closing it entirely means cgo, which is the trade this package exists to
+avoid.
+
+<sub>Measured on Apple M5 Pro, macOS 26.5, Go 1.26.1, wazero v1.12.0, against
+`anydoc.wasm` 6,542,355 bytes (anydoc 0.1.7). The 5 MB figure is a 25,000-row
 table: 42 KB zipped, since the size that matters is the uncompressed body.</sub>
 
 **A fresh guest per document.** Each `Convert` instantiates its own linear
@@ -95,7 +104,7 @@ The module is embedded by default so `go get` and `New()` just work. Builds that
 would rather ship it out of band:
 
 ```
-go build -tags anydoc_nowasm    # 4.87 MB smaller
+go build -tags anydoc_nowasm    # 6.59 MB smaller
 ```
 
 `embeddedWASM` is then nil and `New` requires `WithWASM(r)` or
@@ -103,8 +112,8 @@ go build -tags anydoc_nowasm    # 4.87 MB smaller
 pinning a different anydoc build, or environments that forbid opaque embedded
 blobs.
 
-The saving is the 4.83 MB module plus ~35 KB of `embed` machinery. For scale,
-`examples/convert` is 12.4 MB built normally and 7.3 MB with the tag.
+The saving is the 6.54 MB module plus ~47 KB of `embed` machinery. For scale,
+`examples/convert` is 14.1 MB built normally and 7.6 MB with the tag.
 
 The build tag affects the compiled binary, not `go get`: the module is in the
 Go module either way.

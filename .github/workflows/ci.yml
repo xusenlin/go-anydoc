@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        with: { go-version: '1.22' }
+        with: { go-version: '1.25' }
       - uses: arduino/setup-task@v2
         with:
           version: 3.x
@@ -23,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        with: { go-version: '1.22' }
+        with: { go-version: '1.25' }
       # The point of this package: one wasm, every platform, no cgo. Built
       # without the nowasm tag, so the embedded module is part of what is
       # proven to cross-compile.

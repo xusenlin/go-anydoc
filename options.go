@@ -92,17 +92,17 @@ func WithMaxInputBytes(n int) Option {
 // WithCompiler trades startup cost and memory for throughput, by having wazero
 // compile the module to native code instead of interpreting it.
 //
-// Measured on the real module, per document: a 1 KB docx goes from 5.0ms to
-// 1.0ms, and one with a 5 MB uncompressed body from 16.9s to 1.1s. The price is
-// paid once in New, which goes from ~85ms and 135 MB of RSS to ~2.1s and
-// 576 MB. That 576 MB is an OOM kill in a 512 MB container, which is why this
-// is opt-in rather than the default.
+// Measured on the real module, per document: a 1 KB docx goes from 3.5ms to
+// 0.4ms, one with a 5 MB uncompressed body from 11.1s to 0.86s, and a 7.5 MB
+// PDF from 41s to 3.4s. The price is paid once in New, which goes from ~100ms
+// and 182 MB of RSS to ~2.7s and 638 MB. That 638 MB is an OOM kill in a
+// 512 MB container, which is why this is opt-in rather than the default.
 //
 // The compilation is paid once, in New, not per document: Convert only
 // instantiates the already-compiled module. So this pays off in a long-lived
 // process that reuses one Converter, and is a pure loss in a short-lived one
-// that converts a single small document and exits -- there it buys ~4ms for
-// ~2s. Leave it off for tight containers too.
+// that converts a single small document and exits -- there it buys ~3ms for
+// ~2.7s. Leave it off for tight containers too.
 //
 // This is a request, not a guarantee. The compiler backend needs amd64 or
 // arm64 (with SSE4.1 on amd64) on a mainstream OS, and needs the host to allow
