@@ -74,11 +74,11 @@ case errors.Is(err, anydoc.ErrMalformed):    // 格式认得出但内容损坏
 
 把取舍摊开说：wasmtime 的 Go 绑定是 cgo 的，采用它就要付出 `CGO_ENABLED=0`、自由交叉编译和单一自包含二进制这三样。如果你的场景里原生速度比这三样更重要，那么一个 cgo 绑定才是诚实的答案，本包不是合适的工具。
 
-### `experiment/wazy` 分支
+### `experiment-wazy` 分支
 
-上面那个差距，大部分并不是"坚持纯 Go"的必然代价。[wazy](https://github.com/samyfodil/wazy) 是一个由 wazero 衍生而来的纯 Go 运行时，它把力气花在了主导这类负载的内存访问路径上。[`experiment/wazy`](../../tree/experiment/wazy) 分支就是本包跑在它上面——API、内嵌模块、退出码 ABI 全都没变，只改了一处 import：
+上面那个差距，大部分并不是"坚持纯 Go"的必然代价。[wazy](https://github.com/samyfodil/wazy) 是一个由 wazero 衍生而来的纯 Go 运行时，它把力气花在了主导这类负载的内存访问路径上。[`experiment-wazy`](../../tree/experiment-wazy) 分支就是本包跑在它上面——API、内嵌模块、退出码 ABI 全都没变，只改了一处 import：
 
-| 转换 | `main`（wazero） | `experiment/wazy` | |
+| 转换 | `main`（wazero） | `experiment-wazy` | |
 |---|---|---|---|
 | 1 KB docx，解释器 | 3.5 ms | 2.7 ms | 1.3× |
 | 1 KB docx，编译器 | 0.4 ms | 0.62 ms | 0.6× |
@@ -88,6 +88,16 @@ case errors.Is(err, anydoc.ErrMalformed):    // 格式认得出但内容损坏
 | 7.5 MB PDF，编译器 | 3.4 s | 0.75 s | 4.5× |
 
 输出逐字节一致，完整测试套件通过，交叉编译到 riscv64、ppc64le、386、s390x 同样正常。优势集中在长时间计算；小文档基本持平甚至略差。
+
+用法是直接按分支名取，Go 会把它解析成一个伪版本：
+
+```bash
+go get github.com/xusenlin/go-anydoc@experiment-wazy
+```
+
+其余什么都不用改：导入路径一样，API 一样。注意解析出的伪版本排序高于当前最新
+tag，所以 `go get -u` 不会把你悄悄拉回 `main`；但将来发布的正式 tag 会，介意的话
+就把版本钉死。
 
 **做成分支而不是选项，是因为其他做法的代价。** 在调用时选择运行时，会把两个引擎都链接进每一个二进制——实测让只用其中一个的用户多付 **3.22 MB**。build tag 能避免链接开销，但无论哪种做法，wazy 都会进入每个下游用户的模块图。而 wazy 目前没有稳定版本：几个被撤回的 beta、一个伪版本、单一作者，并且明确声明不作稳定性承诺。`main` 继续用 wazero，就是为了不让任何人在不知情的情况下继承这份风险。愿意承担风险换速度的，可以直接用这个分支；等 wazy 发布稳定版后会重新评估。
 

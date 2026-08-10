@@ -101,16 +101,16 @@ them would cost `CGO_ENABLED=0`, free cross-compilation, and the single
 self-contained binary. If your workload values native speed above those, a cgo
 binding is the honest answer and this package is the wrong tool.
 
-### The `experiment/wazy` branch
+### The `experiment-wazy` branch
 
 Most of that gap is not the price of staying in pure Go.
 [wazy](https://github.com/samyfodil/wazy) is a pure-Go runtime descended from
 wazero that spends its effort on the memory-access paths this workload lives
-in, and the [`experiment/wazy`](../../tree/experiment/wazy) branch is this
+in, and the [`experiment-wazy`](../../tree/experiment-wazy) branch is this
 package running on it — same API, same embedded module, same exit-code ABI,
 one import changed:
 
-| converting | `main` (wazero) | `experiment/wazy` | |
+| converting | `main` (wazero) | `experiment-wazy` | |
 |---|---|---|---|
 | 1 KB docx, interpreted | 3.5 ms | 2.7 ms | 1.3× |
 | 1 KB docx, compiled | 0.4 ms | 0.62 ms | 0.6× |
@@ -122,6 +122,17 @@ one import changed:
 Output is byte-identical, the whole suite passes, and it still cross-compiles
 to riscv64, ppc64le, 386 and s390x. Long compute is where it wins; tiny
 documents are a wash or slightly worse.
+
+To use it, ask for the branch by name — Go resolves it to a pseudo-version:
+
+```bash
+go get github.com/xusenlin/go-anydoc@experiment-wazy
+```
+
+Nothing else changes: same import path, same API. Note that the resulting
+pseudo-version sorts above the latest tag, so `go get -u` will not silently
+pull you back onto `main`; a future tagged release would, so pin it if that
+matters.
 
 It is a branch rather than an option because of what the alternatives cost.
 Selecting a runtime at call time links both engines into every binary,
