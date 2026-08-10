@@ -61,19 +61,25 @@ profiles refuse them — and cannot assume the target is amd64 or arm64.
 An *application* does know where its own data lives, and that changes the
 arithmetic: `WithCompilationCache` makes the compiler's cost a one-time
 2.8 s and 647 MB instead of a per-start one, and every start after that is
-34 ms at 50 MB — cheaper than interpreting, and 4× faster to convert with.
+34 ms at 50 MB — cheaper than interpreting, and an order of magnitude
+faster to convert with.
 The defaults below assume no cache, because a library cannot assume one.
 
 The trade is real and it scales with document size, so measure against your own
 corpus before assuming it is free:
 
-| | interpreter (default) | compiler (`WithCompiler`) |
-|---|---|---|
-| `New()` — once per process | ~100 ms | ~2.7 s |
-| 1 KB docx | 3.5 ms | 0.4 ms |
-| docx with a 5 MB uncompressed body | 11.1 s | 0.86 s |
-| 7.5 MB PDF | 41.4 s | 3.4 s |
-| RSS after `New()` | 182 MB | 638 MB |
+| | interpreter (default) | compiler | compiler + warm cache |
+|---|---|---|---|
+| `New()` — once per process | ~100 ms | ~2.7 s | **34 ms** |
+| 1 KB docx | 3.5 ms | 0.4 ms | 0.4 ms |
+| docx with a 5 MB uncompressed body | 11.1 s | 0.86 s | 0.86 s |
+| 7.5 MB PDF | 41.4 s | 3.4 s | 3.4 s |
+| RSS after `New()` | 182 MB | 638 MB | **50 MB** |
+
+The third column is the second one after `WithCompilationCache` has a directory
+to read from — same execution, none of the startup. Conversion figures are
+identical because the cache changes how the machine code is obtained, not what
+it is. Only the first run on a machine pays the second column.
 
 Ordinary office documents are in the second row's territory and cost nothing
 worth optimising. Multi-megabyte ones are ~12× slower than they would be
