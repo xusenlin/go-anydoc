@@ -130,8 +130,15 @@ go get github.com/xusenlin/go-anydoc@v0.1.3-experiment.1
 ```
 
 Nothing else changes: same import path, same API. The tag is a semver
-pre-release, so Go skips it for `@latest` and for `go get -u` — it has to be
-asked for by name, and it will not move underneath you once it is in `go.mod`.
+pre-release, so Go skips it for `@latest` — nobody lands on it by accident.
+
+One caveat worth knowing: a pre-release only sorts below its own release, and
+above everything lower. So once `main` is tagged past `v0.1.3`, `go get -u`
+will move an experiment user onto `main` and quietly swap the runtime back.
+Your `go.mod` is not touched by anything else — `go build` and `go mod tidy`
+leave it alone — so pin the version and avoid `-u` on this dependency. The
+experiment tag is re-cut above `main` on each release to keep `-u` honest, but
+do not rely on that alone.
 
 It is a branch rather than an option because of what the alternatives cost.
 Selecting a runtime at call time links both engines into every binary,
@@ -272,6 +279,21 @@ is actually embedded.
 `rust/Cargo.lock` is committed too. The `=` pin only fixes anydoc itself; the
 lockfile is what stops a transitive dependency from silently changing the
 conversion output between one rebuild and the next.
+
+### Releasing
+
+```
+task verify                # everything that has to hold
+git tag -a vX.Y.Z && git push origin vX.Y.Z
+task check-experiment-tag  # then re-cut the experiment tag above the new one
+```
+
+The last step is not optional while `experiment-wazy` exists. A semver
+pre-release loses only to its own release and beats everything lower, so a new
+tag on `main` climbs over `vX.Y.Z-experiment.N` and `go get -u` starts pulling
+experiment users back onto `main` — silently swapping their runtime.
+`task check-experiment-tag` fails when that has happened, so re-tag the
+experiment branch one patch above the new release and push it.
 
 ## License
 

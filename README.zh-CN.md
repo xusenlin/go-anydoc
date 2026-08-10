@@ -96,8 +96,13 @@ go get github.com/xusenlin/go-anydoc@v0.1.3-experiment.1
 ```
 
 其余什么都不用改：导入路径一样，API 一样。这个 tag 是 semver 预发布版本，Go 在
-`@latest` 和 `go get -u` 时都会跳过它——必须指名索取，而一旦写进 `go.mod` 就不会
-在你脚下被挪走。
+`@latest` 时会跳过它——不会有人误装。
+
+有一点需要知道：预发布版本只低于**同号的正式版**，但高于所有更低的版本。所以一旦
+`main` 发布了 `v0.1.3` 之后的 tag，实验版用户跑 `go get -u` 就会被切回 `main`，
+运行时也就悄悄换了回去。除此之外没有任何东西会动你的 `go.mod`——`go build` 和
+`go mod tidy` 都不会——所以请把版本钉死，并避免对这个依赖使用 `-u`。每次 `main`
+发版时实验 tag 都会重新打到更高的号上以保持 `-u` 的语义正确，但不要只依赖这一点。
 
 **做成分支而不是选项，是因为其他做法的代价。** 在调用时选择运行时，会把两个引擎都链接进每一个二进制——实测让只用其中一个的用户多付 **3.22 MB**。build tag 能避免链接开销，但无论哪种做法，wazy 都会进入每个下游用户的模块图。而 wazy 目前没有稳定版本：几个被撤回的 beta、一个伪版本、单一作者，并且明确声明不作稳定性承诺。`main` 继续用 wazero，就是为了不让任何人在不知情的情况下继承这份风险。愿意承担风险换速度的，可以直接用这个分支；等 wazy 发布稳定版后会重新评估。
 
@@ -182,6 +187,16 @@ task wasm      # 重新构建内嵌模块，需要 Rust 1.88 + wasm-opt
 `anydoc.EmbeddedAnydocVersion` 报告内嵌模块是从哪个 crate 版本构建的，`anydoc.Info()` 把它和载荷大小一起打印。它由 `task sync-version` 从 `rust/Cargo.lock` 单向复制而来，`task check-version` 会在两者不一致时让构建失败——所以它不可能悄悄谎报实际内嵌的是什么。
 
 `rust/Cargo.lock` 也一并提交。`=` 只锁住了 anydoc 本身，真正防止传递依赖在两次重建之间悄悄改变转换输出的，是这个 lockfile。
+
+### 发布流程
+
+```
+task verify                # 全部检查
+git tag -a vX.Y.Z && git push origin vX.Y.Z
+task check-experiment-tag  # 然后把实验 tag 重打到新版本之上
+```
+
+**只要 `experiment-wazy` 还在，最后一步就不是可选的。** semver 预发布版本只输给同号正式版、赢过所有更低版本，所以 `main` 上的新 tag 会爬到 `vX.Y.Z-experiment.N` 之上，`go get -u` 就会把实验版用户拉回 `main`——运行时被悄悄换掉，且没有任何提示。`task check-experiment-tag` 会在这种情况下报错，届时把实验分支重打成比新版本高一个 patch 的 tag 并推送即可。
 
 ## 许可证
 
