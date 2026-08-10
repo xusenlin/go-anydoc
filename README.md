@@ -126,13 +126,12 @@ documents are a wash or slightly worse.
 To use it, ask for the branch by name — Go resolves it to a pseudo-version:
 
 ```bash
-go get github.com/xusenlin/go-anydoc@experiment-wazy
+go get github.com/xusenlin/go-anydoc@v0.1.3-experiment.1
 ```
 
-Nothing else changes: same import path, same API. Note that the resulting
-pseudo-version sorts above the latest tag, so `go get -u` will not silently
-pull you back onto `main`; a future tagged release would, so pin it if that
-matters.
+Nothing else changes: same import path, same API. The tag is a semver
+pre-release, so Go skips it for `@latest` and for `go get -u` — it has to be
+asked for by name, and it will not move underneath you once it is in `go.mod`.
 
 It is a branch rather than an option because of what the alternatives cost.
 Selecting a runtime at call time links both engines into every binary,

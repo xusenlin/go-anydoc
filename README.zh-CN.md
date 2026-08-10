@@ -92,12 +92,12 @@ case errors.Is(err, anydoc.ErrMalformed):    // 格式认得出但内容损坏
 用法是直接按分支名取，Go 会把它解析成一个伪版本：
 
 ```bash
-go get github.com/xusenlin/go-anydoc@experiment-wazy
+go get github.com/xusenlin/go-anydoc@v0.1.3-experiment.1
 ```
 
-其余什么都不用改：导入路径一样，API 一样。注意解析出的伪版本排序高于当前最新
-tag，所以 `go get -u` 不会把你悄悄拉回 `main`；但将来发布的正式 tag 会，介意的话
-就把版本钉死。
+其余什么都不用改：导入路径一样，API 一样。这个 tag 是 semver 预发布版本，Go 在
+`@latest` 和 `go get -u` 时都会跳过它——必须指名索取，而一旦写进 `go.mod` 就不会
+在你脚下被挪走。
 
 **做成分支而不是选项，是因为其他做法的代价。** 在调用时选择运行时，会把两个引擎都链接进每一个二进制——实测让只用其中一个的用户多付 **3.22 MB**。build tag 能避免链接开销，但无论哪种做法，wazy 都会进入每个下游用户的模块图。而 wazy 目前没有稳定版本：几个被撤回的 beta、一个伪版本、单一作者，并且明确声明不作稳定性承诺。`main` 继续用 wazero，就是为了不让任何人在不知情的情况下继承这份风险。愿意承担风险换速度的，可以直接用这个分支；等 wazy 发布稳定版后会重新评估。
 
