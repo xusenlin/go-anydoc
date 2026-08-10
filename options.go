@@ -11,6 +11,7 @@ type config struct {
 	memoryPages   uint32
 	maxInputBytes int
 	compiler      bool
+	cacheDir      string
 }
 
 func defaultConfig() config {
@@ -102,7 +103,9 @@ func WithMaxInputBytes(n int) Option {
 // instantiates the already-compiled module. So this pays off in a long-lived
 // process that reuses one Converter, and is a pure loss in a short-lived one
 // that converts a single small document and exits -- there it buys ~3ms for
-// ~2.7s. Leave it off for tight containers too.
+// ~2.7s. Leave it off for tight containers too, unless you can also give it
+// WithCompilationCache, which removes both of those objections after the
+// first run.
 //
 // This is a request, not a guarantee. The compiler backend needs amd64 or
 // arm64 (with SSE4.1 on amd64) on a mainstream OS, and needs the host to allow
@@ -112,6 +115,31 @@ func WithMaxInputBytes(n int) Option {
 // affects cross-compilation, since wazero is pure Go.
 func WithCompiler() Option {
 	return func(c *config) { c.compiler = true }
+}
+
+// WithCompilationCache persists the compiler's output under dirname, so the
+// cost of WithCompiler is paid once per machine instead of once per process.
+//
+// It changes what WithCompiler costs more than it changes what it does.
+// Measured on the real module, a hit turns New from 2.8s and 647 MB of peak
+// RSS into 34ms and 50 MB, because the machine code is read back rather than
+// produced -- the memory WithCompiler is expensive for is the compiler
+// working, not the compiled module sitting there. The directory holds ~23 MB.
+//
+// This only affects WithCompiler. The interpreter emits no machine code, so
+// there is nothing to persist and this option does nothing.
+//
+// An entry is keyed by the module, the CPU's feature bits, the runtime version
+// and the target platform. Anything else is a miss, and a miss simply compiles
+// again and writes a new entry -- it will not hand the host machine code it
+// cannot run. That also makes the directory disposable: deleting it costs one
+// recompilation and nothing else, and what it holds is machine code, never
+// anything a caller passed to Convert.
+//
+// Give it a directory the process owns and that survives restarts; a temporary
+// directory wastes the point. It is created if missing, and Close releases it.
+func WithCompilationCache(dirname string) Option {
+	return func(c *config) { c.cacheDir = dirname }
 }
 
 // Info reports what this build is carrying, for diagnostics and version

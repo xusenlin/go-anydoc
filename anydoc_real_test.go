@@ -14,6 +14,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io/fs"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -233,6 +235,83 @@ func TestRealWithCompiler(t *testing.T) {
 	if _, err := c.Convert(ctx, in, "docx"); err != nil {
 		t.Fatalf("second convert: %v", err)
 	}
+}
+
+// The cache is what makes WithCompiler affordable outside a long-lived server,
+// so what has to hold is that a second process reusing the directory produces
+// the same Markdown -- speed is the reward, correctness is the requirement.
+// The interpreter half of this matters just as much: it emits no machine code,
+// and silently filling a directory with nothing would be a lie in the docs.
+func TestRealCompilationCache(t *testing.T) {
+	ctx := context.Background()
+	in := minimalDocx(t, "季度报告", [][2]string{{"指标", "数值"}})
+
+	dir := t.TempDir()
+	convert := func() string {
+		t.Helper()
+		c, err := New(WithCompiler(), WithCompilationCache(dir))
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		defer c.Close(ctx)
+		md, err := c.Convert(ctx, in, "docx")
+		if err != nil {
+			t.Fatalf("Convert: %v", err)
+		}
+		return md
+	}
+
+	cold := convert()
+	entries := countFiles(t, dir)
+	if entries == 0 {
+		// wazero degrades to the interpreter where the compiler backend is
+		// unavailable, and then there is nothing to write. Not a failure --
+		// but the rest of this test would be asserting nothing.
+		t.Skip("no cache entries written; the compiler backend is unavailable here")
+	}
+
+	// A warm run is a different Converter reading back what the cold one left.
+	if warm := convert(); warm != cold {
+		t.Errorf("warm cache changed the output:\n--- cold ---\n%s\n--- warm ---\n%s", cold, warm)
+	}
+	if after := countFiles(t, dir); after != entries {
+		t.Errorf("warm run rewrote the cache: %d entries before, %d after", entries, after)
+	}
+
+	// The interpreter has no machine code to persist, so its directory stays
+	// empty. WithCompilationCache documents this; keep it true.
+	interpDir := t.TempDir()
+	c, err := New(WithCompilationCache(interpDir))
+	if err != nil {
+		t.Fatalf("New(interpreter): %v", err)
+	}
+	defer c.Close(ctx)
+	if _, err := c.Convert(ctx, in, "docx"); err != nil {
+		t.Fatalf("Convert(interpreter): %v", err)
+	}
+	if n := countFiles(t, interpDir); n != 0 {
+		t.Errorf("interpreter wrote %d cache entries, want 0", n)
+	}
+}
+
+// countFiles reports how many regular files exist under dir, at any depth:
+// wazero nests entries in a version- and platform-specific subdirectory.
+func countFiles(t *testing.T, dir string) int {
+	t.Helper()
+	n := 0
+	err := filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.Type().IsRegular() {
+			n++
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", dir, err)
+	}
+	return n
 }
 
 // A guest that exhausts its linear memory traps as a bare "unreachable" with

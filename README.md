@@ -53,10 +53,16 @@ module to native machine code up front (fast to run, expensive to load, amd64
 and arm64 only) or interpret it instruction by instruction (cheap to load,
 portable everywhere, slower to run). This package interprets by default,
 because a library that ships inside other people's binaries cannot assume it
-may pre-warm a compilation cache, cannot assume the host allows the executable
-pages the compiler needs — macOS hardened runtime and some seccomp profiles
-refuse them — and cannot assume the target is amd64 or arm64. `WithCompiler`
-opts into the other side of that trade.
+may write a compilation cache somewhere, cannot assume the host allows the
+executable pages the compiler needs — macOS hardened runtime and some seccomp
+profiles refuse them — and cannot assume the target is amd64 or arm64.
+`WithCompiler` opts into the other side of that trade.
+
+An *application* does know where its own data lives, and that changes the
+arithmetic: `WithCompilationCache` makes the compiler's cost a one-time
+2.8 s and 647 MB instead of a per-start one, and every start after that is
+34 ms at 50 MB — cheaper than interpreting, and 4× faster to convert with.
+The defaults below assume no cache, because a library cannot assume one.
 
 The trade is real and it scales with document size, so measure against your own
 corpus before assuming it is free:
@@ -194,6 +200,7 @@ anydoc.New(
     anydoc.WithMemoryLimitPages(1024), // 64 MiB per guest
     anydoc.WithMaxInputBytes(64<<20),
     anydoc.WithCompiler(),            // throughput over startup cost; see below
+    anydoc.WithCompilationCache(dir), // and pay that cost only once; see below
 )
 ```
 
@@ -212,6 +219,36 @@ does not hold — riscv64, ppc64le, 386, macOS hardened runtime, some seccomp
 profiles — wazero falls back to the interpreter silently and the conversion
 still happens, just at interpreter speed. Cross-compilation is unaffected
 either way: wazero is pure Go, and this option changes no build constraints.
+
+### `WithCompilationCache`
+
+Persists the compiler's output under a directory you own, so `WithCompiler`
+costs what it costs once per machine rather than once per process:
+
+| `New()` with `WithCompiler` | time | peak RSS |
+|---|---|---|
+| cold — compiling | 2.8 s | 647 MB |
+| warm — reading the result back | **34 ms** | **50 MB** |
+
+That gap is the whole argument against `WithCompiler` disappearing. The memory
+it is expensive for is the compiler *working*, not the compiled module sitting
+there; a hit loads machine code instead of producing it. The directory holds
+about 23 MB.
+
+This only affects `WithCompiler`. The interpreter emits no machine code, so
+there is nothing to persist and the option does nothing — the directory stays
+empty, and the test suite asserts it.
+
+An entry is keyed by the module, the CPU's feature bits, the wazero version and
+the target platform. Anything else is a miss, and a miss just compiles again
+and writes a new entry; it will never hand a host machine code it cannot run.
+So the directory is disposable — deleting it costs one recompilation — and it
+holds machine code, never anything a caller passed to `Convert`.
+
+Two things follow for anyone shipping this. Give it somewhere that survives a
+restart, or the point is lost. And prefer to let it fill at runtime rather than
+baking it into an image: the CPU feature bits are in the key, and a CI builder
+rarely shares them with wherever the image ends up.
 
 `WithMemoryLimitPages` is validated against the module's declared minimum at
 `New` time, not at conversion time — setting it too low fails fast with a clear

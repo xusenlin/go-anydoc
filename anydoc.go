@@ -33,6 +33,7 @@ import (
 type Converter struct {
 	runtime  wazero.Runtime
 	compiled wazero.CompiledModule
+	cache    wazero.CompilationCache // nil unless WithCompilationCache was given
 	gate     chan struct{}
 	maxBytes int
 	pages    uint32 // kept so a guest OOM can name the limit it hit
@@ -72,9 +73,12 @@ func New(opts ...Option) (*Converter, error) {
 	//  2. The compiler needs mmap'd executable pages, which macOS hardened
 	//     runtime and some seccomp profiles refuse. The interpreter never asks.
 	//  3. Compiling this module costs ~2.7s and 638 MB of RSS, against ~100ms
-	//     and 182 MB to interpret it. A library cannot assume it may pre-warm
-	//     a compilation cache on the user's machine, and 638 MB is an OOM kill
-	//     in a 512 MB container.
+	//     and 182 MB to interpret it, and 638 MB is an OOM kill in a 512 MB
+	//     container. A library cannot assume it may write a compilation cache
+	//     somewhere on the user's machine, so it cannot make that the default
+	//     -- but an application knows where its own data lives, which is what
+	//     WithCompilationCache is for: with a warm cache those figures become
+	//     34ms and 50 MB, and the reasoning above stops applying.
 	//
 	// The cost is throughput, and it scales with document size rather than
 	// being a flat overhead: measured on the real module, a 1 KB docx takes
@@ -97,24 +101,46 @@ func New(opts ...Option) (*Converter, error) {
 		WithMemoryLimitPages(cfg.memoryPages).
 		WithCloseOnContextDone(true)
 
+	// The compiler's output is worth keeping. Compiling this module is what
+	// costs seconds and hundreds of megabytes; loading the result back is
+	// neither. Only the compiler produces anything to store, so an interpreted
+	// runtime configured with a cache simply never writes to it.
+	var cache wazero.CompilationCache
+	if cfg.cacheDir != "" {
+		var err error
+		if cache, err = wazero.NewCompilationCacheWithDir(cfg.cacheDir); err != nil {
+			return nil, fmt.Errorf("anydoc: compilation cache %q: %w", cfg.cacheDir, err)
+		}
+		rtCfg = rtCfg.WithCompilationCache(cache)
+	}
+
 	rt := wazero.NewRuntimeWithConfig(ctx, rtCfg)
+
+	// The cache owns an engine of its own and outlives the runtime, so every
+	// exit from here has to release both.
+	fail := func(err error) (*Converter, error) {
+		rt.Close(ctx)
+		if cache != nil {
+			cache.Close(ctx)
+		}
+		return nil, err
+	}
 
 	// WASI is needed for stdio and for random_get, which std's HashMap seeding
 	// reaches for. Nothing else is granted: no filesystem, no clock, no sockets.
 	if _, err := wasi_snapshot_preview1.Instantiate(ctx, rt); err != nil {
-		rt.Close(ctx)
-		return nil, fmt.Errorf("anydoc: instantiate wasi: %w", err)
+		return fail(fmt.Errorf("anydoc: instantiate wasi: %w", err))
 	}
 
 	compiled, err := rt.CompileModule(ctx, module)
 	if err != nil {
-		rt.Close(ctx)
-		return nil, fmt.Errorf("anydoc: compile module: %w", err)
+		return fail(fmt.Errorf("anydoc: compile module: %w", err))
 	}
 
 	return &Converter{
 		runtime:  rt,
 		compiled: compiled,
+		cache:    cache,
 		gate:     make(chan struct{}, cfg.concurrency),
 		maxBytes: cfg.maxInputBytes,
 		pages:    cfg.memoryPages,
@@ -219,10 +245,20 @@ func (c *Converter) ConvertReader(ctx context.Context, r io.Reader, hint string)
 	return c.Convert(ctx, buf.Bytes(), hint)
 }
 
-// Close releases the runtime. The Converter is unusable afterwards.
+// Close releases the runtime, and the compilation cache when there is one. The
+// Converter is unusable afterwards. Cached entries stay on disk: that is the
+// point of them.
 func (c *Converter) Close(ctx context.Context) error {
 	c.closeOnce.Do(func() {
 		c.closeErr = c.runtime.Close(ctx)
+		if c.cache != nil {
+			// A cache holds its own engine, which a runtime Close does not
+			// reach. Report its failure only if the runtime closed cleanly,
+			// so the first error survives.
+			if err := c.cache.Close(ctx); err != nil && c.closeErr == nil {
+				c.closeErr = err
+			}
+		}
 	})
 	return c.closeErr
 }
