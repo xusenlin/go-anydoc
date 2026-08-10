@@ -135,22 +135,25 @@ Output is byte-identical, the whole suite passes, and it still cross-compiles
 to riscv64, ppc64le, 386 and s390x. Long compute is where it wins; tiny
 documents are a wash or slightly worse.
 
-To use it, ask for the branch by name — Go resolves it to a pseudo-version:
+Take it with a `replace`, not a `require`:
 
 ```bash
-go get github.com/xusenlin/go-anydoc@v0.1.3-experiment.1
+go mod edit -replace github.com/xusenlin/go-anydoc=github.com/xusenlin/go-anydoc@v0.1.4-experiment.1
+go mod tidy
 ```
 
-Nothing else changes: same import path, same API. The tag is a semver
-pre-release, so Go skips it for `@latest` — nobody lands on it by accident.
+Nothing else changes: same import path, same API.
 
-One caveat worth knowing: a pre-release only sorts below its own release, and
-above everything lower. So once `main` is tagged past `v0.1.3`, `go get -u`
-will move an experiment user onto `main` and quietly swap the runtime back.
-Your `go.mod` is not touched by anything else — `go build` and `go mod tidy`
-leave it alone — so pin the version and avoid `-u` on this dependency. The
-experiment tag is re-cut above `main` on each release to keep `-u` honest, but
-do not rely on that alone.
+It has to be a `replace`. A pre-release sorts below the release it is based on,
+so a `require` on the experiment tag loses to `main`'s next release and
+`go get -u` swaps the runtime back with no signal. `go get` never rewrites a
+`replace`: it may bump the `require` line above it, and the build still uses
+the branch. The tag therefore does not have to outrank anything, and it moves
+only when the branch itself changes.
+
+That works because a `replace` applies in the main module. If you are a library
+rather than an application, you cannot make this choice for your dependents,
+and you should stay on `main`.
 
 It is a branch rather than an option because of what the alternatives cost.
 Selecting a runtime at call time links both engines into every binary,
@@ -328,15 +331,14 @@ conversion output between one rebuild and the next.
 ```
 task verify                # everything that has to hold
 git tag -a vX.Y.Z && git push origin vX.Y.Z
-task check-experiment-tag  # then re-cut the experiment tag above the new one
 ```
 
-The last step is not optional while `experiment-wazy` exists. A semver
-pre-release loses only to its own release and beats everything lower, so a new
-tag on `main` climbs over `vX.Y.Z-experiment.N` and `go get -u` starts pulling
-experiment users back onto `main` — silently swapping their runtime.
-`task check-experiment-tag` fails when that has happened, so re-tag the
-experiment branch one patch above the new release and push it.
+Releasing `main` needs nothing from `experiment-wazy`. That branch is pinned by
+commit rather than by tag, and its README tells its users to hold it with a
+`replace`, which no release here can outrank. Chasing it with an ever-higher
+pre-release tag was the earlier answer and a worse one: it made every release
+depend on remembering a second, and it never worked anyway, since a
+pre-release cannot outrank the release it is based on.
 
 ## License
 

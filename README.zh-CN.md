@@ -93,20 +93,22 @@ case errors.Is(err, anydoc.ErrMalformed):    // 格式认得出但内容损坏
 
 输出逐字节一致，完整测试套件通过，交叉编译到 riscv64、ppc64le、386、s390x 同样正常。优势集中在长时间计算；小文档基本持平甚至略差。
 
-用法是直接按分支名取，Go 会把它解析成一个伪版本：
+取它请用 `replace`，不要用 `require`：
 
 ```bash
-go get github.com/xusenlin/go-anydoc@v0.1.3-experiment.1
+go mod edit -replace github.com/xusenlin/go-anydoc=github.com/xusenlin/go-anydoc@v0.1.4-experiment.1
+go mod tidy
 ```
 
-其余什么都不用改：导入路径一样，API 一样。这个 tag 是 semver 预发布版本，Go 在
-`@latest` 时会跳过它——不会有人误装。
+其余什么都不用改：导入路径一样，API 一样。
 
-有一点需要知道：预发布版本只低于**同号的正式版**，但高于所有更低的版本。所以一旦
-`main` 发布了 `v0.1.3` 之后的 tag，实验版用户跑 `go get -u` 就会被切回 `main`，
-运行时也就悄悄换了回去。除此之外没有任何东西会动你的 `go.mod`——`go build` 和
-`go mod tidy` 都不会——所以请把版本钉死，并避免对这个依赖使用 `-u`。每次 `main`
-发版时实验 tag 都会重新打到更高的号上以保持 `-u` 的语义正确，但不要只依赖这一点。
+**必须用 `replace`。** 预发布版本排在同号正式版之前，所以用 `require` 引实验 tag 会
+输给 `main` 的下一个正式版，`go get -u` 会不声不响地把运行时换回去。而 `go get` 从不
+改写 `replace`：它可以把上面那行 `require` 升上去，构建用的仍然是这个分支。于是这个
+tag 不需要压过任何东西，只有分支本身变化时才需要重打。
+
+这一招成立的前提是 `replace` 只在主模块生效。如果你是**库**而不是应用，你无法替下游
+做这个决定，那就应该留在 `main`。
 
 **做成分支而不是选项，是因为其他做法的代价。** 在调用时选择运行时，会把两个引擎都链接进每一个二进制——实测让只用其中一个的用户多付 **3.22 MB**。build tag 能避免链接开销，但无论哪种做法，wazy 都会进入每个下游用户的模块图。而 wazy 目前没有稳定版本：几个被撤回的 beta、一个伪版本、单一作者，并且明确声明不作稳定性承诺。`main` 继续用 wazero，就是为了不让任何人在不知情的情况下继承这份风险。愿意承担风险换速度的，可以直接用这个分支；等 wazy 发布稳定版后会重新评估。
 
@@ -215,10 +217,9 @@ task wasm      # 重新构建内嵌模块，需要 Rust 1.88 + wasm-opt
 ```
 task verify                # 全部检查
 git tag -a vX.Y.Z && git push origin vX.Y.Z
-task check-experiment-tag  # 然后把实验 tag 重打到新版本之上
 ```
 
-**只要 `experiment-wazy` 还在，最后一步就不是可选的。** semver 预发布版本只输给同号正式版、赢过所有更低版本，所以 `main` 上的新 tag 会爬到 `vX.Y.Z-experiment.N` 之上，`go get -u` 就会把实验版用户拉回 `main`——运行时被悄悄换掉，且没有任何提示。`task check-experiment-tag` 会在这种情况下报错，届时把实验分支重打成比新版本高一个 patch 的 tag 并推送即可。
+**发布 `main` 不需要照顾 `experiment-wazy`。** 那个分支按 commit 钉住而不是按 tag，它的 README 让用户用 `replace` 持有，而 `replace` 不是任何一次发版能盖过的。此前的做法是每次发版都把实验 tag 重打到更高的号上——那既让每次发版都依赖"记得还有第二步"，本身也不成立：预发布版本压根盖不过它所基于的正式版。
 
 ## 许可证
 

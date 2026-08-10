@@ -80,32 +80,6 @@ tasks:
     cmds:
       - 'echo "embed.go matches rust/Cargo.lock: anydoc {{.ANYDOC_VERSION}}"'
 
-  check-experiment-tag:
-    desc: Fail if the experiment tag no longer sorts above main's latest release
-    # A semver pre-release outranks every lower version but loses to its own
-    # release, so any new tag on main climbs over v0.1.3-experiment.1 and
-    # `go get -u` silently returns an experiment user to the wazero build. The
-    # fix is to re-cut the experiment tag one patch above main after releasing;
-    # this is here so that is noticed rather than remembered.
-    #
-    # Compares base versions only: the pre-release suffix is stripped first, so
-    # sort -V never has to reason about pre-release ordering, which it gets
-    # wrong.
-    cmds:
-      - |
-        latest=$(git tag -l 'v*' | grep -v -- '-' | sed 's/^v//' | sort -V | tail -1)
-        exp=$(git tag -l 'v*-experiment.*' | sed 's/^v//;s/-experiment\..*//' | sort -V | tail -1)
-        if [ -z "$exp" ]; then echo "no experiment tag; nothing to check"; exit 0; fi
-        if [ -z "$latest" ]; then echo "no release tag yet"; exit 0; fi
-        highest=$(printf '%s\n%s\n' "$latest" "$exp" | sort -V | tail -1)
-        if [ "$highest" = "$latest" ] || [ "$latest" = "$exp" ]; then
-          echo "experiment tag is based on v$exp, main is at v$latest."
-          echo "Re-cut the experiment tag above main, e.g. v<next-patch>-experiment.1,"
-          echo "or 'go get -u' will pull experiment users back onto main."
-          exit 1
-        fi
-        echo "ok: experiment tag (v$exp base) still sorts above main (v$latest)"
-
   verify:
     desc: Everything that has to hold before tagging a release
     cmds:
