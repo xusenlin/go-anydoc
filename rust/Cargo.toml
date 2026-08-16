@@ -9,7 +9,7 @@ description = "Thin wasm32-wasip1 command wrapper around the anydoc crate, for g
 [dependencies]
 # Pinned on purpose. Bumping this is an explicit, reviewed action:
 # it changes conversion output for every downstream Go user.
-anydoc = "=0.1.7"
+anydoc = "=0.1.9"
 
 [[bin]]
 name = "anydoc-wasi"
