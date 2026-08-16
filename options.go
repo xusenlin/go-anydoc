@@ -90,7 +90,7 @@ func WithMaxInputBytes(n int) Option {
 	return func(c *config) { c.maxInputBytes = n }
 }
 
-// WithCompiler trades startup cost and memory for throughput, by having wazero
+// WithCompiler trades startup cost and memory for throughput, by having wazy
 // compile the module to native code instead of interpreting it.
 //
 // Measured on the real module, per document: a 1 KB docx goes from 3.5ms to
@@ -110,9 +110,9 @@ func WithMaxInputBytes(n int) Option {
 // This is a request, not a guarantee. The compiler backend needs amd64 or
 // arm64 (with SSE4.1 on amd64) on a mainstream OS, and needs the host to allow
 // mmap'd executable pages -- macOS hardened runtime and some seccomp profiles
-// refuse them. Where it is unavailable, wazero falls back to the interpreter
+// refuse them. Where it is unavailable, wazy falls back to the interpreter
 // silently: the conversion still happens, at interpreter speed. Nothing here
-// affects cross-compilation, since wazero is pure Go.
+// affects cross-compilation, since wazy is pure Go.
 func WithCompiler() Option {
 	return func(c *config) { c.compiler = true }
 }

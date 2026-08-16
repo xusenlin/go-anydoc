@@ -22,18 +22,18 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/tetratelabs/wazero"
-	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
-	"github.com/tetratelabs/wazero/sys"
+	"github.com/samyfodil/wazy"
+	"github.com/samyfodil/wazy/imports/wasi_snapshot_preview1"
+	"github.com/samyfodil/wazy/sys"
 )
 
 // Converter runs conversions. It is safe for concurrent use and should be
 // created once and reused: New compiles the module, which is the expensive
 // part, and Convert then instantiates a cheap short-lived guest per document.
 type Converter struct {
-	runtime  wazero.Runtime
-	compiled wazero.CompiledModule
-	cache    wazero.CompilationCache // nil unless WithCompilationCache was given
+	runtime  wazy.Runtime
+	compiled wazy.CompiledModule
+	cache    wazy.CompilationCache // nil unless WithCompilationCache was given
 	gate     chan struct{}
 	maxBytes int
 	pages    uint32 // kept so a guest OOM can name the limit it hit
@@ -87,15 +87,15 @@ func New(opts ...Option) (*Converter, error) {
 	// multi-megabyte ones are not. Callers who need the throughput and can
 	// afford the memory opt in with WithCompiler; everyone else bounds the
 	// tail with WithMaxInputBytes and a context deadline.
-	var rtCfg wazero.RuntimeConfig
+	var rtCfg wazy.RuntimeConfig
 	if cfg.compiler {
 		// NewRuntimeConfig, not NewRuntimeConfigCompiler: the latter panics
 		// where the backend is unavailable, and this package is meant to run
 		// on platforms that have none. Auto picks the compiler when the host
 		// supports it and degrades to the interpreter when it does not.
-		rtCfg = wazero.NewRuntimeConfig()
+		rtCfg = wazy.NewRuntimeConfig()
 	} else {
-		rtCfg = wazero.NewRuntimeConfigInterpreter()
+		rtCfg = wazy.NewRuntimeConfigInterpreter()
 	}
 	rtCfg = rtCfg.
 		WithMemoryLimitPages(cfg.memoryPages).
@@ -105,16 +105,16 @@ func New(opts ...Option) (*Converter, error) {
 	// costs seconds and hundreds of megabytes; loading the result back is
 	// neither. Only the compiler produces anything to store, so an interpreted
 	// runtime configured with a cache simply never writes to it.
-	var cache wazero.CompilationCache
+	var cache wazy.CompilationCache
 	if cfg.cacheDir != "" {
 		var err error
-		if cache, err = wazero.NewCompilationCacheWithDir(cfg.cacheDir); err != nil {
+		if cache, err = wazy.NewCompilationCacheWithDir(cfg.cacheDir); err != nil {
 			return nil, fmt.Errorf("anydoc: compilation cache %q: %w", cfg.cacheDir, err)
 		}
 		rtCfg = rtCfg.WithCompilationCache(cache)
 	}
 
-	rt := wazero.NewRuntimeWithConfig(ctx, rtCfg)
+	rt := wazy.NewRuntimeWithConfig(ctx, rtCfg)
 
 	// The cache owns an engine of its own and outlives the runtime, so every
 	// exit from here has to release both.
@@ -178,8 +178,8 @@ func (c *Converter) Convert(ctx context.Context, doc []byte, hint string) (strin
 
 	var stdout, stderr bytes.Buffer
 
-	modCfg := wazero.NewModuleConfig().
-		// Anonymous. A wasip1 command module carries a name, and wazero refuses
+	modCfg := wazy.NewModuleConfig().
+		// Anonymous. A wasip1 command module carries a name, and wazy refuses
 		// to instantiate the same name twice; without this, the second
 		// concurrent Convert fails with "module already instantiated".
 		WithName("").
@@ -197,7 +197,7 @@ func (c *Converter) Convert(ctx context.Context, doc []byte, hint string) (strin
 	if err != nil {
 		guestErr := strings.TrimSpace(stderr.String())
 
-		// wazero reports a command module's exit through sys.ExitError,
+		// wazy reports a command module's exit through sys.ExitError,
 		// including a clean exit(0) in some paths, so check the code before
 		// treating this as a failure.
 		var exitErr *sys.ExitError

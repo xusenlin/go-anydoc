@@ -74,7 +74,7 @@ func TestExitCodeMapping(t *testing.T) {
 }
 
 // This is the failure I kept warning about: a wasip1 command module carries a
-// name, and wazero rejects instantiating the same name twice. Without
+// name, and wazy rejects instantiating the same name twice. Without
 // WithName("") in Convert, this test deadlocks or errors under -race.
 func TestConcurrentConvert(t *testing.T) {
 	c := newStub(t, WithConcurrency(8))

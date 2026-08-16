@@ -62,7 +62,7 @@ func TestRealCSV(t *testing.T) {
 // minimalDocx builds a WordprocessingML package that is valid enough to parse:
 // content types, a package relationship, and a document with one paragraph and
 // one two-column table.
-func minimalDocx(t *testing.T, para string, cells [][2]string) []byte {
+func minimalDocx(t testing.TB, para string, cells [][2]string) []byte {
 	t.Helper()
 
 	var doc strings.Builder
@@ -200,7 +200,7 @@ func TestRealErrorMapping(t *testing.T) {
 }
 
 // WithCompiler must not change what comes out, only how fast. Where the
-// backend is unavailable wazero falls back to the interpreter, so this passes
+// backend is unavailable wazy falls back to the interpreter, so this passes
 // on every platform either way -- which is the point of routing through
 // NewRuntimeConfig rather than NewRuntimeConfigCompiler, the latter panicking
 // on platforms with no backend.
@@ -264,7 +264,7 @@ func TestRealCompilationCache(t *testing.T) {
 	cold := convert()
 	entries := countFiles(t, dir)
 	if entries == 0 {
-		// wazero degrades to the interpreter where the compiler backend is
+		// wazy degrades to the interpreter where the compiler backend is
 		// unavailable, and then there is nothing to write. Not a failure --
 		// but the rest of this test would be asserting nothing.
 		t.Skip("no cache entries written; the compiler backend is unavailable here")
@@ -295,7 +295,7 @@ func TestRealCompilationCache(t *testing.T) {
 }
 
 // countFiles reports how many regular files exist under dir, at any depth:
-// wazero nests entries in a version- and platform-specific subdirectory.
+// wazy nests entries in a version- and platform-specific subdirectory.
 func countFiles(t *testing.T, dir string) int {
 	t.Helper()
 	n := 0
