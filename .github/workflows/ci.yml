@@ -30,7 +30,8 @@ jobs:
       - name: Cross-compile
         run: |
           for t in linux/amd64 linux/arm64 linux/riscv64 linux/ppc64le linux/386 \
-                   darwin/amd64 darwin/arm64 windows/amd64 windows/arm64 freebsd/amd64; do
+                   linux/s390x darwin/amd64 darwin/arm64 windows/amd64 \
+                   windows/arm64 freebsd/amd64; do
             GOOS=${t%/*} GOARCH=${t#*/} CGO_ENABLED=0 go build ./... || exit 1
             echo "ok $t"
           done
