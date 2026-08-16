@@ -9,9 +9,11 @@ vars:
   # resolved, recorded in rust/Cargo.lock. embed.go's constant is copied from
   # there rather than maintained by hand, so the version a user sees in Info()
   # is the version the module was really built from.
-  ANYDOC_VERSION:
-    sh: |
-      sed -n '/^name = "anydoc"$/{n;s/^version = "\(.*\)"$/\1/p;}' rust/Cargo.lock
+  #
+  # It is deliberately not a global var. Task evaluates those once, as the file
+  # loads -- which for `task wasm` is before cargo re-resolves Cargo.lock, so a
+  # global would stamp embed.go with the version being replaced. Each task
+  # reads the lockfile itself, at the point it runs.
 
 tasks:
   default:
@@ -53,32 +55,40 @@ tasks:
         wasm-opt -O3 --enable-bulk-memory --enable-nontrapping-float-to-int
         -o anydoc.wasm rust/target/wasm32-wasip1/release/anydoc-wasi.wasm
       - '{{.SHA256}} anydoc.wasm > anydoc.wasm.sha256'
+      # Prints the version it wrote, which is the version just built.
       - task: sync-version
-      - echo "built anydoc.wasm from anydoc {{.ANYDOC_VERSION}}"
       - ls -l anydoc.wasm
 
   sync-version:
     desc: Copy the resolved crate version from Cargo.lock into embed.go
     # Not sed -i: that spelling differs between BSD and GNU.
-    preconditions:
-      - sh: test -n "{{.ANYDOC_VERSION}}"
-        msg: "could not read the anydoc version from rust/Cargo.lock"
     cmds:
-      - sed 's/^const EmbeddedAnydocVersion = .*/const EmbeddedAnydocVersion = "{{.ANYDOC_VERSION}}"/' embed.go > embed.go.tmp
-      - mv embed.go.tmp embed.go
-      - grep EmbeddedAnydocVersion embed.go
+      - |
+        version=$(sed -n '/^name = "anydoc"$/{n;s/^version = "\(.*\)"$/\1/p;}' rust/Cargo.lock)
+        if [ -z "$version" ]; then
+          echo "could not read the anydoc version from rust/Cargo.lock" >&2
+          exit 1
+        fi
+        sed "s/^const EmbeddedAnydocVersion = .*/const EmbeddedAnydocVersion = \"$version\"/" embed.go > embed.go.tmp
+        mv embed.go.tmp embed.go
+        grep EmbeddedAnydocVersion embed.go
 
   check-version:
     desc: Fail if embed.go and Cargo.lock disagree about the embedded version
     # Drift here would make Info() lie about what is embedded. Cheap enough to
     # run on every push.
-    preconditions:
-      - sh: test -n "{{.ANYDOC_VERSION}}"
-        msg: "could not read the anydoc version from rust/Cargo.lock"
-      - sh: grep -q '^const EmbeddedAnydocVersion = "{{.ANYDOC_VERSION}}"$' embed.go
-        msg: "embed.go does not match rust/Cargo.lock (anydoc {{.ANYDOC_VERSION}}); run: task sync-version"
     cmds:
-      - 'echo "embed.go matches rust/Cargo.lock: anydoc {{.ANYDOC_VERSION}}"'
+      - |
+        version=$(sed -n '/^name = "anydoc"$/{n;s/^version = "\(.*\)"$/\1/p;}' rust/Cargo.lock)
+        if [ -z "$version" ]; then
+          echo "could not read the anydoc version from rust/Cargo.lock" >&2
+          exit 1
+        fi
+        if ! grep -q "^const EmbeddedAnydocVersion = \"$version\"$" embed.go; then
+          echo "embed.go does not match rust/Cargo.lock (anydoc $version); run: task sync-version" >&2
+          exit 1
+        fi
+        echo "embed.go matches rust/Cargo.lock: anydoc $version"
 
   verify:
     desc: Everything that has to hold before tagging a release
