@@ -19,7 +19,7 @@ CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build ./...
 go get github.com/xusenlin/go-anydoc
 ```
 
-Requires Go 1.25 or newer, which is what wazero requires.
+Requires Go 1.25 or newer, which is what wazy requires.
 
 ## Usage
 
@@ -48,7 +48,7 @@ case errors.Is(err, anydoc.ErrMalformed):    // recognised but corrupt
 
 ## Design notes
 
-**Interpreter, not the optimising compiler.** wazero can either translate the
+**Interpreter, not the optimising compiler.** wazy can either translate the
 module to native machine code up front (fast to run, expensive to load, amd64
 and arm64 only) or interpret it instruction by instruction (cheap to load,
 portable everywhere, slower to run). This package interprets by default,
@@ -60,8 +60,8 @@ profiles refuse them — and cannot assume the target is amd64 or arm64.
 
 An *application* does know where its own data lives, and that changes the
 arithmetic: `WithCompilationCache` makes the compiler's cost a one-time
-2.8 s and 647 MB instead of a per-start one, and every start after that is
-34 ms at 50 MB — cheaper than interpreting, and an order of magnitude
+2.5 s and 630 MB instead of a per-start one, and every start after that is
+7 ms at 36 MB — cheaper than interpreting, and two orders of magnitude
 faster to convert with.
 The defaults below assume no cache, because a library cannot assume one.
 
@@ -70,11 +70,11 @@ corpus before assuming it is free:
 
 | | interpreter (default) | compiler | compiler + warm cache |
 |---|---|---|---|
-| `New()` — once per process | ~100 ms | ~2.7 s | **34 ms** |
-| 1 KB docx | 3.5 ms | 0.4 ms | 0.4 ms |
-| docx with a 5 MB uncompressed body | 11.1 s | 0.86 s | 0.86 s |
-| 7.5 MB PDF | 41.4 s | 3.4 s | 3.4 s |
-| RSS after `New()` | 182 MB | 638 MB | **50 MB** |
+| `New()` — once per process | 101 ms | 2.5 s | **7 ms** |
+| 1 KB docx | 2.4 ms | 0.51 ms | 0.51 ms |
+| docx with a 5 MB uncompressed body | 8.4 s | 0.18 s | 0.18 s |
+| 7.5 MB PDF | 34.5 s | 0.77 s | 0.77 s |
+| RSS after `New()` | 120 MB | 630 MB | **36 MB** |
 
 The third column is the second one after `WithCompilationCache` has a directory
 to read from — same execution, none of the startup. Conversion figures are
@@ -82,91 +82,45 @@ identical because the cache changes how the machine code is obtained, not what
 it is. Only the first run on a machine pays the second column.
 
 Ordinary office documents are in the second row's territory and cost nothing
-worth optimising. Multi-megabyte ones are ~12× slower than they would be
+worth optimising. Multi-megabyte ones are ~45× slower than they would be
 compiled, so if you convert those, either bound the tail with
 `WithMaxInputBytes` and a context deadline — cancellation interrupts the guest
 mid-conversion — or opt into `WithCompiler`.
 
-**The slowness is the runtime, not wasm.** It is tempting to read the numbers
-above as the cost of compiling to WebAssembly. Measured on the same PDF and the
-same `anydoc.wasm`, it is not — the format costs almost nothing, and nearly all
-of the gap is how a particular runtime turns wasm into machine code:
+**wazy, not wazero.** [wazy](https://github.com/samyfodil/wazy) is a pure-Go
+runtime descended from wazero that spends its effort on the memory-access paths
+this workload lives in. Same module, same inputs, same machine:
 
-| running the same 7.5 MB PDF | | vs native |
-|---|---|---|
-| native Rust binary | 0.28 s | 1× |
-| the same wasm, wasmtime with Cranelift | 0.37 s | 1.3× |
-| the same wasm, wasmtime with Winch, a deliberately baseline compiler | 0.90 s | 3.2× |
-| the same wasm, wazy with `WithCompiler` (see below) | 0.75 s | 2.7× |
-| the same wasm, wazero with `WithCompiler` | 3.4 s | 12× |
-| the same wasm, wazy interpreted (see below) | 33 s | 118× |
-| the same wasm, wazero interpreted | 41 s | 146× |
-
-So the things usually blamed — 32-bit pointers, bounds-checked linear memory,
-no native SIMD — account for the 1.3×. Everything beyond that is code
-generation. wazero's compiler is fast, simple and portable rather than
-optimising, which is precisely what buys pure Go with no cgo and no
-platform-specific backend to ship.
-
-That is the trade, stated plainly: wasmtime's Go bindings are cgo, so adopting
-them would cost `CGO_ENABLED=0`, free cross-compilation, and the single
-self-contained binary. If your workload values native speed above those, a cgo
-binding is the honest answer and this package is the wrong tool.
-
-### The `experiment-wazy` branch
-
-Most of that gap is not the price of staying in pure Go.
-[wazy](https://github.com/samyfodil/wazy) is a pure-Go runtime descended from
-wazero that spends its effort on the memory-access paths this workload lives
-in, and the [`experiment-wazy`](../../tree/experiment-wazy) branch is this
-package running on it — same API, same embedded module, same exit-code ABI,
-one import changed:
-
-| converting | `main` (wazero) | `experiment-wazy` | |
+| converting | wazero v1.12.0 | wazy v0.1.3 | |
 |---|---|---|---|
-| 1 KB docx, interpreted | 3.5 ms | 2.7 ms | 1.3× |
-| 1 KB docx, compiled | 0.4 ms | 0.62 ms | 0.6× |
-| 5 MB docx body, interpreted | 11.1 s | 8.6 s | 1.3× |
-| 5 MB docx body, compiled | 0.86 s | 0.19 s | 4.5× |
-| 7.5 MB PDF, interpreted | 41.4 s | 32.6 s | 1.3× |
-| 7.5 MB PDF, compiled | 3.4 s | 0.75 s | 4.5× |
+| 1 KB docx, compiled | 0.73 ms | 0.51 ms | 1.4× |
+| docx with a 5 MB body, compiled | 0.85 s | 0.18 s | **4.7×** |
+| 7.5 MB PDF, compiled | 3.63 s | 0.77 s | **4.7×** |
+| 1 KB docx, interpreted | 2.55 ms | 2.39 ms | 1.1× |
+| docx with a 5 MB body, interpreted | 10.9 s | 8.4 s | 1.3× |
+| 7.5 MB PDF, interpreted | 43.8 s | 34.5 s | 1.3× |
 
-Output is byte-identical, the whole suite passes, and it still cross-compiles
-to riscv64, ppc64le, 386 and s390x. Long compute is where it wins; tiny
-documents are a wash or slightly worse.
+Long compute is where it wins, and the longer the compute the wider the gap.
+Allocation is the other half of it: interpreting that PDF costs 472 allocations
+on wazy against 58 million on wazero, and 100 MB against 1.5 GB.
 
-Take it with a `replace`, not a `require`:
+The port was an import change. Same API, same embedded module, same exit-code
+ABI, byte-identical output, and it still cross-compiles to riscv64, ppc64le,
+386 and s390x.
 
-```bash
-go mod edit -replace github.com/xusenlin/go-anydoc=github.com/xusenlin/go-anydoc@v0.1.4-experiment.1
-go mod tidy
-```
+The trade, stated plainly: wazy is a month old, has one author, and makes no
+API-stability promise; wazero is mature, widely deployed, and has a company
+behind it. This package took the newer one because converting documents that
+take long enough for 4.7× to matter is the whole job — and because the way back
+is the same one line.
 
-Nothing else changes: same import path, same API.
-
-It has to be a `replace`. A pre-release sorts below the release it is based on,
-so a `require` on the experiment tag loses to `main`'s next release and
-`go get -u` swaps the runtime back with no signal. `go get` never rewrites a
-`replace`: it may bump the `require` line above it, and the build still uses
-the branch. The tag therefore does not have to outrank anything, and it moves
-only when the branch itself changes.
-
-That works because a `replace` applies in the main module. If you are a library
-rather than an application, you cannot make this choice for your dependents,
-and you should stay on `main`.
-
-It is a branch rather than an option because of what the alternatives cost.
-Selecting a runtime at call time links both engines into every binary,
-measured at **+3.22 MB** for users who only ever use one. A build tag avoids
-that, but either way wazy lands in every downstream module graph — and wazy
-has no stable release: retracted betas, a pseudo-version, one author, and an
-explicit statement that it makes no stability promise. `main` stays on wazero
-so nobody inherits that by accident. Take the branch if you want the speed and
-can carry the risk; it will be revisited if wazy reaches a stable release.
-
-<sub>Measured on Apple M5 Pro, macOS 26.5, Go 1.26.1, wazero v1.12.0, against
-`anydoc.wasm` 6,542,355 bytes (anydoc 0.1.7). The 5 MB figure is a 25,000-row
-table: 42 KB zipped, since the size that matters is the uncompressed body.</sub>
+<sub>Every figure on this page comes from `bench_test.go`, so it can be checked
+rather than believed: `go test -run '^$' -bench . -benchtime 3x`, and
+`ANYDOC_BENCH_PDF=big.pdf` for the PDF rows. Measured on Apple M5 Pro (18-core),
+48 GB, macOS 26.5, Go 1.26.1, `CGO_ENABLED=0`, against `anydoc.wasm` 6,833,738
+bytes (anydoc 0.1.9). The 5 MB figure is a 25,000-row table — 42 KB zipped,
+since the size that costs time is the uncompressed body — and needs
+`WithMemoryLimitPages(1280)`, above the default.</sub>
 
 **A fresh guest per document.** Each `Convert` instantiates its own linear
 memory, so a large document cannot leave memory permanently claimed and a
@@ -187,7 +141,7 @@ The module is embedded by default so `go get` and `New()` just work. Builds that
 would rather ship it out of band:
 
 ```
-go build -tags anydoc_nowasm    # 6.59 MB smaller
+go build -tags anydoc_nowasm    # 6.89 MB smaller
 ```
 
 `embeddedWASM` is then nil and `New` requires `WithWASM(r)` or
@@ -195,8 +149,8 @@ go build -tags anydoc_nowasm    # 6.59 MB smaller
 pinning a different anydoc build, or environments that forbid opaque embedded
 blobs.
 
-The saving is the 6.54 MB module plus ~47 KB of `embed` machinery. For scale,
-`examples/convert` is 14.1 MB built normally and 7.6 MB with the tag.
+The saving is the 6.83 MB module plus ~56 KB of `embed` machinery. For scale,
+`examples/convert` is 14.6 MB built normally and 7.7 MB with the tag.
 
 The build tag affects the compiled binary, not `go get`: the module is in the
 Go module either way.
@@ -220,14 +174,14 @@ table above from the left column into the right one. The cost is paid **once,
 in `New`** — `Convert` only instantiates the already-compiled module — so it
 pays off in a long-lived process that reuses one `Converter`, and is a pure
 loss in a short-lived one that converts a single small document and exits
-(~2.1 s bought to save ~4 ms).
+(~2.4 s bought to save ~1.9 ms).
 
 It is a request, not a guarantee. The backend needs amd64 or arm64 on a
 mainstream OS, plus a host that permits mmap'd executable pages. Where that
 does not hold — riscv64, ppc64le, 386, macOS hardened runtime, some seccomp
-profiles — wazero falls back to the interpreter silently and the conversion
+profiles — wazy falls back to the interpreter silently and the conversion
 still happens, just at interpreter speed. Cross-compilation is unaffected
-either way: wazero is pure Go, and this option changes no build constraints.
+either way: wazy is pure Go, and this option changes no build constraints.
 
 ### `WithCompilationCache`
 
@@ -236,19 +190,19 @@ costs what it costs once per machine rather than once per process:
 
 | `New()` with `WithCompiler` | time | peak RSS |
 |---|---|---|
-| cold — compiling | 2.8 s | 647 MB |
-| warm — reading the result back | **34 ms** | **50 MB** |
+| cold — compiling | 2.5 s | 630 MB |
+| warm — reading the result back | **7 ms** | **36 MB** |
 
 That gap is the whole argument against `WithCompiler` disappearing. The memory
 it is expensive for is the compiler *working*, not the compiled module sitting
 there; a hit loads machine code instead of producing it. The directory holds
-about 23 MB.
+about 15 MB.
 
 This only affects `WithCompiler`. The interpreter emits no machine code, so
 there is nothing to persist and the option does nothing — the directory stays
 empty, and the test suite asserts it.
 
-An entry is keyed by the module, the CPU's feature bits, the wazero version and
+An entry is keyed by the module, the CPU's feature bits, the wazy version and
 the target platform. Anything else is a miss, and a miss just compiles again
 and writes a new entry; it will never hand a host machine code it cannot run.
 So the directory is disposable — deleting it costs one recompilation — and it
@@ -303,6 +257,19 @@ There are two suites, split by build tag:
   conversion output, format detection, and the error codes the crate actually
   emits.
 
+`bench_test.go` produces every figure in this README:
+
+```
+go test -run '^$' -bench . -benchtime 3x
+ANYDOC_BENCH_PDF=big.pdf go test -run '^$' -bench PDF -benchtime 3x
+```
+
+Docx inputs are generated in the benchmark, so a checkout is enough to
+reproduce a run. PDFs are not: none small enough to commit is heavy enough to
+be worth measuring, so that one takes a path from the environment and skips
+without it. Re-run both after changing the crate pin or the runtime — the
+figures here are only as good as the build they were taken on.
+
 `anydoc.wasm` is a build artifact committed to the repo, because Go modules
 have no build step: whatever is committed is what `go get` delivers. It is
 built from the pinned crate by `task wasm`, run by hand rather than by CI, and
@@ -333,12 +300,10 @@ task verify                # everything that has to hold
 git tag -a vX.Y.Z && git push origin vX.Y.Z
 ```
 
-Releasing `main` needs nothing from `experiment-wazy`. That branch is pinned by
-commit rather than by tag, and its README tells its users to hold it with a
-`replace`, which no release here can outrank. Chasing it with an ever-higher
-pre-release tag was the earlier answer and a worse one: it made every release
-depend on remembering a second, and it never worked anyway, since a
-pre-release cannot outrank the release it is based on.
+There is nothing else to keep in step. The runtime experiment used to live on
+its own branch, held by a `replace` and a pre-release tag that every release
+had to be careful not to overtake; wazy reaching a tagged release made the
+branch unnecessary, and `main` now depends on it like any other module.
 
 ## License
 
