@@ -70,7 +70,7 @@ corpus before assuming it is free:
 
 | | interpreter (default) | compiler | compiler + warm cache |
 |---|---|---|---|
-| `New()` — once per process | 101 ms | 2.5 s | **7 ms** |
+| `New()` — once per process | 72 ms | 2.5 s | **7 ms** |
 | 1 KB docx | 2.4 ms | 0.51 ms | 0.51 ms |
 | docx with a 5 MB uncompressed body | 8.4 s | 0.18 s | 0.18 s |
 | 7.5 MB PDF | 34.5 s | 0.77 s | 0.77 s |
