@@ -117,8 +117,8 @@ is the same one line.
 <sub>Every figure on this page comes from `bench_test.go`, so it can be checked
 rather than believed: `go test -run '^$' -bench . -benchtime 3x`, and
 `ANYDOC_BENCH_PDF=big.pdf` for the PDF rows. Measured on Apple M5 Pro (18-core),
-48 GB, macOS 26.5, Go 1.26.1, `CGO_ENABLED=0`, against `anydoc.wasm` 6,833,738
-bytes (anydoc 0.1.9). The 5 MB figure is a 25,000-row table — 42 KB zipped,
+48 GB, macOS 26.5, Go 1.26.1, `CGO_ENABLED=0`, against `anydoc.wasm` 6,781,177
+bytes (anydoc 0.2.3). The 5 MB figure is a 25,000-row table — 42 KB zipped,
 since the size that costs time is the uncompressed body — and needs
 `WithMemoryLimitPages(1280)`, above the default.</sub>
 
@@ -141,7 +141,7 @@ The module is embedded by default so `go get` and `New()` just work. Builds that
 would rather ship it out of band:
 
 ```
-go build -tags anydoc_nowasm    # 6.89 MB smaller
+go build -tags anydoc_nowasm    # 6.84 MB smaller
 ```
 
 `embeddedWASM` is then nil and `New` requires `WithWASM(r)` or
@@ -149,8 +149,8 @@ go build -tags anydoc_nowasm    # 6.89 MB smaller
 pinning a different anydoc build, or environments that forbid opaque embedded
 blobs.
 
-The saving is the 6.83 MB module plus ~56 KB of `embed` machinery. For scale,
-`examples/convert` is 14.6 MB built normally and 7.7 MB with the tag.
+The saving is the 6.78 MB module plus ~56 KB of `embed` machinery. For scale,
+`examples/convert` is 14.5 MB built normally and 7.7 MB with the tag.
 
 The build tag affects the compiled binary, not `go get`: the module is in the
 Go module either way.

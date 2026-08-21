@@ -14,6 +14,6 @@ var embeddedWASM []byte
 // EmbeddedAnydocVersion is the upstream crate version this wasm was built from.
 // Copied from rust/Cargo.lock by `task sync-version`; `task check-version`
 // fails the build if the two drift apart.
-const EmbeddedAnydocVersion = "0.1.9"
+const EmbeddedAnydocVersion = "0.2.3"
 
 const wasmEmbedded = true

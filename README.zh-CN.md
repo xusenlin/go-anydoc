@@ -79,7 +79,7 @@ case errors.Is(err, anydoc.ErrMalformed):    // 格式认得出但内容损坏
 
 把取舍摊开说：wazy 只有一个月大，单一作者，且明确声明不作 API 稳定性承诺；wazero 成熟、部署广泛、背后有公司。本包选了新的那个，因为处理"长到值得在意 4.7 倍"的文档正是它的全部工作——也因为退回去同样只是那一行。
 
-<sub>本页每个数字都出自 `bench_test.go`，可以自己核验而不必相信：`go test -run '^$' -bench . -benchtime 3x`，PDF 那几行加 `ANYDOC_BENCH_PDF=big.pdf`。实测环境：Apple M5 Pro（18 核），48 GB，macOS 26.5，Go 1.26.1，`CGO_ENABLED=0`，`anydoc.wasm` 6,833,738 字节（anydoc 0.1.9）。5 MB 那一行是 2.5 万行表格，zip 后只有 42 KB——真正决定耗时的是解压后的正文体积——并且需要 `WithMemoryLimitPages(1280)`，高于默认值。</sub>
+<sub>本页每个数字都出自 `bench_test.go`，可以自己核验而不必相信：`go test -run '^$' -bench . -benchtime 3x`，PDF 那几行加 `ANYDOC_BENCH_PDF=big.pdf`。实测环境：Apple M5 Pro（18 核），48 GB，macOS 26.5，Go 1.26.1，`CGO_ENABLED=0`，`anydoc.wasm` 6,781,177 字节（anydoc 0.2.3）。5 MB 那一行是 2.5 万行表格，zip 后只有 42 KB——真正决定耗时的是解压后的正文体积——并且需要 `WithMemoryLimitPages(1280)`，高于默认值。</sub>
 
 **每份文档一个全新 guest。** 每次 `Convert` 都新建独立的线性内存，所以一份大文档不会让内存被永久占住，一份畸形文档也不会把状态泄漏给下一次调用。真正昂贵的编译只在 `New` 里做一次。
 
@@ -92,12 +92,12 @@ case errors.Is(err, anydoc.ErrMalformed):    // 格式认得出但内容损坏
 默认内嵌模块，`go get` 完 `New()` 就能跑。想把载荷单独分发的：
 
 ```
-go build -tags anydoc_nowasm    # 省下 6.89 MB
+go build -tags anydoc_nowasm    # 省下 6.84 MB
 ```
 
 此时 `embeddedWASM` 为 nil，`New` 要求必须传 `WithWASM(r)` 或 `WithWASMBytes(b)`。适用于容器分层、Serverless 部署包大小限制、锁定另一个 anydoc 构建，或者禁止二进制内嵌不可追溯 blob 的合规环境。
 
-省下的是 6.83 MB 的模块本身，再加上约 56 KB 的 `embed` 机制开销。给个体感：`examples/convert` 正常编译 14.6 MB，加上这个 tag 是 7.7 MB。
+省下的是 6.78 MB 的模块本身，再加上约 56 KB 的 `embed` 机制开销。给个体感：`examples/convert` 正常编译 14.5 MB，加上这个 tag 是 7.7 MB。
 
 注意 build tag 只影响编译产物，不影响 `go get`——模块文件在 Go module 里躺着，两种情况都要下载。
 
