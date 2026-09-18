@@ -75,9 +75,23 @@ case errors.Is(err, anydoc.ErrMalformed):    // 格式认得出但内容损坏
 
 优势集中在长时间计算，而且计算越长差距越大。另一半是内存分配：解释执行那份 PDF，wazy 是 472 次分配、100 MB，wazero 是 5800 万次、1.5 GB。
 
+编译模式那几行的差距主要来自一个选项，不是代码生成质量。本包无条件设置 `WithCloseOnContextDone(true)`，因为取消 context 必须能打断一次已经跑在 guest 里的转换，而 wazero 的编译器为此付的代价比 wazy 大得多：它会把终止检查插进生成的机器码。只切换这一行调用，同一份 5 MB 的 docx：
+
+| 编译模式，正文 5 MB 的 docx | wazero v1.12.0 | wazy v0.1.3 | |
+|---|---|---|---|
+| 开启，即本包的实际配置 | 0.92 s | 0.20 s | **4.7×** |
+| 关闭 | 0.14 s | 0.12 s | 1.2× |
+| 该选项的代价 | 6.5× | 1.6× | |
+
+关掉之后两个编译器相差 20%，大致就是 wazy 自己宣称的水平。所以 4.7× 对本包的调用方是真实的，但它衡量的是 wazero 的终止检查，不是它的代码生成。解释器那几行是另一回事：该选项在两边的解释器里都不要钱，所以那里的 1.3× 是引擎差距。[go-pdfium 在 5000 份 PDF 上测到同样的效应][pdfium-ccd]，wazero 约 4.5×，wazy 约 1.4×。
+
+这三行是单独跑的一轮，所以第一行是 0.92 s，而上表同一格写的是 0.85 s。几个百分点的运行间漂移，比值不变。
+
+[pdfium-ccd]: https://github.com/klippa-app/go-pdfium/blob/main/experimental/BENCHMARKS.md#the-cost-of-close-on-context-done
+
 移植只改了一处 import。API、内嵌模块、退出码 ABI 全都没变，输出逐字节一致，交叉编译到 riscv64、ppc64le、386、s390x 同样正常。
 
-把取舍摊开说：wazy 只有一个月大，单一作者，且明确声明不作 API 稳定性承诺；wazero 成熟、部署广泛、背后有公司。本包选了新的那个，因为处理"长到值得在意 4.7 倍"的文档正是它的全部工作——也因为退回去同样只是那一行。
+把取舍摊开说：wazy 只有一个月大，单一作者，且明确声明不作 API 稳定性承诺；wazero 成熟、部署广泛、背后有公司。本包选了新的那个，因为它的默认路径是解释器，在跑几十秒的文档上 wazy 快三分之一、内存分配少五个数量级，也因为退回去同样只是那一行。
 
 <sub>本页每个数字都出自 `bench_test.go`，可以自己核验而不必相信：`go test -run '^$' -bench . -benchtime 3x`，PDF 那几行加 `ANYDOC_BENCH_PDF=big.pdf`。实测环境：Apple M5 Pro（18 核），48 GB，macOS 26.5，Go 1.26.1，`CGO_ENABLED=0`，`anydoc.wasm` 6,781,177 字节（anydoc 0.2.3）。5 MB 那一行是 2.5 万行表格，zip 后只有 42 KB——真正决定耗时的是解压后的正文体积——并且需要 `WithMemoryLimitPages(1280)`，高于默认值。</sub>
 

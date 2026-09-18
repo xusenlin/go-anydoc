@@ -104,15 +104,41 @@ Long compute is where it wins, and the longer the compute the wider the gap.
 Allocation is the other half of it: interpreting that PDF costs 472 allocations
 on wazy against 58 million on wazero, and 100 MB against 1.5 GB.
 
+Most of that compiled gap is one option, not code generation. This package
+always sets `WithCloseOnContextDone(true)`, since cancelling a context has to
+interrupt a conversion already running inside the guest, and wazero's compiler
+pays much more for it than wazy's does: it puts termination checks into the
+machine code it emits. Toggling only that call, same 5 MB docx:
+
+| compiled, docx with a 5 MB body | wazero v1.12.0 | wazy v0.1.3 | |
+|---|---|---|---|
+| option on, which is what this package does | 0.92 s | 0.20 s | **4.7×** |
+| option off | 0.14 s | 0.12 s | 1.2× |
+| what the option costs | 6.5× | 1.6× | |
+
+With it off the two compilers are 20% apart, which is roughly what wazy claims
+for itself. So the 4.7× is real for callers of this package, but it measures
+wazero's termination checks rather than its code generation. The interpreter
+rows are a different story: the option is free in both interpreters, so the
+1.3× there is the engines. [go-pdfium measured the same effect][pdfium-ccd]
+across 5,000 PDFs, at ~4.5× for wazero and ~1.4× for wazy.
+
+Those three rows are their own run, which is why the first reads 0.92 s where
+the table above reads 0.85 s. Run-to-run drift of a few percent; the ratio is
+the same.
+
+[pdfium-ccd]: https://github.com/klippa-app/go-pdfium/blob/main/experimental/BENCHMARKS.md#the-cost-of-close-on-context-done
+
 The port was an import change. Same API, same embedded module, same exit-code
 ABI, byte-identical output, and it still cross-compiles to riscv64, ppc64le,
 386 and s390x.
 
 The trade, stated plainly: wazy is a month old, has one author, and makes no
 API-stability promise; wazero is mature, widely deployed, and has a company
-behind it. This package took the newer one because converting documents that
-take long enough for 4.7× to matter is the whole job — and because the way back
-is the same one line.
+behind it. This package took the newer one because its default path is the
+interpreter, where wazy is a third faster on documents that run for tens of
+seconds and allocates five orders of magnitude less, and because the way back is
+the same one line.
 
 <sub>Every figure on this page comes from `bench_test.go`, so it can be checked
 rather than believed: `go test -run '^$' -bench . -benchtime 3x`, and
