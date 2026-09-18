@@ -109,6 +109,76 @@ func BenchmarkConvertDOCX(b *testing.B) {
 	}
 }
 
+// withoutCloseOnContextDone drops the one runtime call this package otherwise
+// always makes. It is a benchmark knob, not an Option: a Converter built this
+// way cannot be interrupted mid-conversion, which is not a trade any caller
+// should be offered.
+func withoutCloseOnContextDone() Option {
+	return func(c *config) { c.keepRunningPastContext = true }
+}
+
+// BenchmarkCloseOnContextDone isolates what that call costs, because most of
+// the gap this package reports between runtimes on compiled figures is the
+// option rather than the code generation behind it. A compiler that honours
+// cancellation has to emit a termination check the guest reaches often enough
+// to be responsive, and the two runtimes price that very differently.
+//
+// The interpreted arms are the control: an interpreter already returns to its
+// dispatch loop between instructions, so it has somewhere free to check and
+// the option should cost nothing. Any gap that survives there is the engines.
+//
+//	go test -run '^$' -bench CloseOnContextDone -benchtime 3x
+func BenchmarkCloseOnContextDone(b *testing.B) {
+	for _, engine := range []struct {
+		name string
+		opts []Option
+	}{
+		{"compiled", []Option{WithCompiler()}},
+		{"interpreted", nil},
+	} {
+		for _, ccd := range []struct {
+			name string
+			opts []Option
+		}{
+			{"on", nil}, // what New does for every caller
+			{"off", []Option{withoutCloseOnContextDone()}},
+		} {
+			for _, doc := range benchDocs {
+				name := fmt.Sprintf("%s/%s/%s", engine.name, ccd.name, doc.name)
+				b.Run(name, func(b *testing.B) {
+					in := benchInput(b, doc.rows)
+
+					opts := make([]Option, 0, len(engine.opts)+len(ccd.opts)+1)
+					opts = append(opts, engine.opts...)
+					opts = append(opts, ccd.opts...)
+					if doc.pages != 0 {
+						opts = append(opts, WithMemoryLimitPages(doc.pages))
+					}
+
+					c, err := New(opts...)
+					if err != nil {
+						b.Fatalf("New: %v", err)
+					}
+					defer c.Close(context.Background())
+
+					if _, err := c.Convert(context.Background(), in, "docx"); err != nil {
+						b.Fatalf("Convert: %v", err)
+					}
+
+					b.SetBytes(int64(len(in)))
+					b.ReportAllocs()
+					b.ResetTimer()
+					for b.Loop() {
+						if _, err := c.Convert(context.Background(), in, "docx"); err != nil {
+							b.Fatalf("Convert: %v", err)
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
 // BenchmarkConvertPDF is the heavy end of the corpus: a real PDF, which is
 // mostly compute and linear-memory traffic rather than the XML walking a docx
 // is. Set ANYDOC_BENCH_PDF to a file to run it.

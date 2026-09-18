@@ -33,8 +33,7 @@ defer c.Close(ctx)
 md, err := c.Convert(ctx, docBytes, "docx")
 ```
 
-Pass `""` as the hint to detect the format from content. CSV has no signature
-and must be named explicitly.
+Pass `""` as the hint to detect the format from content.
 
 Errors are matched with `errors.Is`:
 
@@ -45,6 +44,24 @@ case errors.Is(err, anydoc.ErrUnsupported):  // not a format anydoc parses
 case errors.Is(err, anydoc.ErrMalformed):    // recognised but corrupt
 }
 ```
+
+## Supported formats
+
+| | extensions |
+|---|---|
+| Word | `.docx` `.docm`, `.doc` (97-2003), `.odt` |
+| Spreadsheet | `.xlsx` `.xlsm` `.xlsb` `.xls`, `.ods`, `.csv` |
+| Presentation | `.pptx` `.pptm` `.ppsx` `.ppsm`, `.ppt` `.pps` `.pot` (97-2003), `.odp` |
+| Other | `.pdf`, `.rtf`, `.epub` (2 and 3) |
+
+Output is always Markdown. The hint is a bare extension from this table;
+anything else is rejected before the document is read. Two things worth
+knowing: `.csv` carries no signature, so detection cannot find it and it has to
+be named, and a scanned or image-only PDF needs OCR, which anydoc does not do —
+those come back as `ErrUnsupported` rather than empty output.
+
+The list is whatever the embedded crate parses, so it moves when the module is
+rebuilt; `anydoc.Info()` reports the version actually compiled in.
 
 ## Design notes
 
@@ -60,8 +77,8 @@ profiles refuse them — and cannot assume the target is amd64 or arm64.
 
 An *application* does know where its own data lives, and that changes the
 arithmetic: `WithCompilationCache` makes the compiler's cost a one-time
-2.5 s and 630 MB instead of a per-start one, and every start after that is
-7 ms at 36 MB — cheaper than interpreting, and two orders of magnitude
+1.3 s and 578 MB instead of a per-start one, and every start after that is
+6 ms at 38 MB — cheaper than interpreting, and two orders of magnitude
 faster to convert with.
 The defaults below assume no cache, because a library cannot assume one.
 
@@ -70,11 +87,11 @@ corpus before assuming it is free:
 
 | | interpreter (default) | compiler | compiler + warm cache |
 |---|---|---|---|
-| `New()` — once per process | 72 ms | 2.5 s | **7 ms** |
-| 1 KB docx | 2.4 ms | 0.51 ms | 0.51 ms |
-| docx with a 5 MB uncompressed body | 8.4 s | 0.18 s | 0.18 s |
-| 7.5 MB PDF | 34.5 s | 0.77 s | 0.77 s |
-| RSS after `New()` | 120 MB | 630 MB | **36 MB** |
+| `New()` — once per process | 83 ms | 1.3 s | **6 ms** |
+| 1 KB docx | 1.4 ms | 0.13 ms | 0.13 ms |
+| docx with a 5 MB uncompressed body | 6.8 s | 0.19 s | 0.19 s |
+| 7.6 MB PDF | 12.1 s | 0.33 s | 0.33 s |
+| RSS after `New()` | 137 MB | 578 MB | **38 MB** |
 
 The third column is the second one after `WithCompilationCache` has a directory
 to read from — same execution, none of the startup. Conversion figures are
@@ -82,71 +99,44 @@ identical because the cache changes how the machine code is obtained, not what
 it is. Only the first run on a machine pays the second column.
 
 Ordinary office documents are in the second row's territory and cost nothing
-worth optimising. Multi-megabyte ones are ~45× slower than they would be
+worth optimising. Multi-megabyte ones are ~36× slower than they would be
 compiled, so if you convert those, either bound the tail with
 `WithMaxInputBytes` and a context deadline — cancellation interrupts the guest
 mid-conversion — or opt into `WithCompiler`.
 
-**wazy, not wazero.** [wazy](https://github.com/samyfodil/wazy) is a pure-Go
-runtime descended from wazero that spends its effort on the memory-access paths
-this workload lives in. Same module, same inputs, same machine:
+**wazy, not wazero.** The runtime is [wazy](https://github.com/samyfodil/wazy),
+a pure-Go runtime descended from wazero that spends its effort on the
+memory-access paths this workload lives in. On the default interpreted path it
+converts these documents about 1.8× faster than wazero v1.12.0 and allocates
+five orders of magnitude less — 59 allocations against 40.5 million on a 7.6 MB
+PDF. The compiled path is further ahead again, though most of that particular
+gap is what `WithCloseOnContextDone(true)` costs each engine rather than a
+difference in code generation; this package always sets it, since cancelling a
+context has to interrupt a conversion already running inside the guest. The
+full comparison, with that effect split out, is in [wazy's README][wazy-bench]
+and [samyfodil/wazy#29][wazy-29].
 
-| converting | wazero v1.12.0 | wazy v0.1.3 | |
-|---|---|---|---|
-| 1 KB docx, compiled | 0.73 ms | 0.51 ms | 1.4× |
-| docx with a 5 MB body, compiled | 0.85 s | 0.18 s | **4.7×** |
-| 7.5 MB PDF, compiled | 3.63 s | 0.77 s | **4.7×** |
-| 1 KB docx, interpreted | 2.55 ms | 2.39 ms | 1.1× |
-| docx with a 5 MB body, interpreted | 10.9 s | 8.4 s | 1.3× |
-| 7.5 MB PDF, interpreted | 43.8 s | 34.5 s | 1.3× |
-
-Long compute is where it wins, and the longer the compute the wider the gap.
-Allocation is the other half of it: interpreting that PDF costs 472 allocations
-on wazy against 58 million on wazero, and 100 MB against 1.5 GB.
-
-Most of that compiled gap is one option, not code generation. This package
-always sets `WithCloseOnContextDone(true)`, since cancelling a context has to
-interrupt a conversion already running inside the guest, and wazero's compiler
-pays much more for it than wazy's does: it puts termination checks into the
-machine code it emits. Toggling only that call, same 5 MB docx:
-
-| compiled, docx with a 5 MB body | wazero v1.12.0 | wazy v0.1.3 | |
-|---|---|---|---|
-| option on, which is what this package does | 0.92 s | 0.20 s | **4.7×** |
-| option off | 0.14 s | 0.12 s | 1.2× |
-| what the option costs | 6.5× | 1.6× | |
-
-With it off the two compilers are 20% apart, which is roughly what wazy claims
-for itself. So the 4.7× is real for callers of this package, but it measures
-wazero's termination checks rather than its code generation. The interpreter
-rows are a different story: the option is free in both interpreters, so the
-1.3× there is the engines. [go-pdfium measured the same effect][pdfium-ccd]
-across 5,000 PDFs, at ~4.5× for wazero and ~1.4× for wazy.
-
-Those three rows are their own run, which is why the first reads 0.92 s where
-the table above reads 0.85 s. Run-to-run drift of a few percent; the ratio is
-the same.
-
-[pdfium-ccd]: https://github.com/klippa-app/go-pdfium/blob/main/experimental/BENCHMARKS.md#the-cost-of-close-on-context-done
-
-The port was an import change. Same API, same embedded module, same exit-code
-ABI, byte-identical output, and it still cross-compiles to riscv64, ppc64le,
-386 and s390x.
-
-The trade, stated plainly: wazy is a month old, has one author, and makes no
+The trade, stated plainly: wazy is two months old, has one author, and makes no
 API-stability promise; wazero is mature, widely deployed, and has a company
-behind it. This package took the newer one because its default path is the
-interpreter, where wazy is a third faster on documents that run for tens of
-seconds and allocates five orders of magnitude less, and because the way back is
-the same one line.
+behind it. The port was a one-line import change — same API, same embedded
+module, same exit-code ABI, byte-identical output — and it still cross-compiles
+to riscv64, ppc64le, 386 and s390x. The way back is the same one line.
+
+[wazy-bench]: https://github.com/samyfodil/wazy#at-scale-a-65-mb-rust-module
+[wazy-29]: https://github.com/samyfodil/wazy/issues/29
 
 <sub>Every figure on this page comes from `bench_test.go`, so it can be checked
-rather than believed: `go test -run '^$' -bench . -benchtime 3x`, and
-`ANYDOC_BENCH_PDF=big.pdf` for the PDF rows. Measured on Apple M5 Pro (18-core),
-48 GB, macOS 26.5, Go 1.26.1, `CGO_ENABLED=0`, against `anydoc.wasm` 6,781,177
-bytes (anydoc 0.2.3). The 5 MB figure is a 25,000-row table — 42 KB zipped,
-since the size that costs time is the uncompressed body — and needs
-`WithMemoryLimitPages(1280)`, above the default.</sub>
+rather than believed: `go test -run '^$' -bench . -benchtime 3x -count 3`, and
+`ANYDOC_BENCH_PDF=big.pdf` for the PDF rows. Inputs are generated by the
+harness, so a checkout is enough to reproduce everything that does not need a
+PDF. Measured on Apple M5 Pro (18-core), 48 GB, macOS 26.5, Go 1.26.1,
+`CGO_ENABLED=0`, against `anydoc.wasm` 6,781,177 bytes (anydoc 0.2.3); min of
+3, since this machine has performance and efficiency cores and no way to pin a
+run to either, which makes a median untrustworthy. The 5 MB figure is a
+25,000-row table — 42 KB zipped, since the size that costs time is the
+uncompressed body — and the benchmark gives it `WithMemoryLimitPages(4096)`,
+above the 1280 it needs and well above the default. `New()` and RSS are a
+separate probe, since `-benchtime` counts conversions rather than startups.</sub>
 
 **A fresh guest per document.** Each `Convert` instantiates its own linear
 memory, so a large document cannot leave memory permanently claimed and a
@@ -176,7 +166,7 @@ pinning a different anydoc build, or environments that forbid opaque embedded
 blobs.
 
 The saving is the 6.78 MB module plus ~56 KB of `embed` machinery. For scale,
-`examples/convert` is 14.5 MB built normally and 7.7 MB with the tag.
+`examples/convert` is 15.1 MB built normally and 8.3 MB with the tag.
 
 The build tag affects the compiled binary, not `go get`: the module is in the
 Go module either way.
@@ -200,7 +190,7 @@ table above from the left column into the right one. The cost is paid **once,
 in `New`** — `Convert` only instantiates the already-compiled module — so it
 pays off in a long-lived process that reuses one `Converter`, and is a pure
 loss in a short-lived one that converts a single small document and exits
-(~2.4 s bought to save ~1.9 ms).
+(~1.3 s bought to save ~1.3 ms).
 
 It is a request, not a guarantee. The backend needs amd64 or arm64 on a
 mainstream OS, plus a host that permits mmap'd executable pages. Where that
@@ -216,8 +206,8 @@ costs what it costs once per machine rather than once per process:
 
 | `New()` with `WithCompiler` | time | peak RSS |
 |---|---|---|
-| cold — compiling | 2.5 s | 630 MB |
-| warm — reading the result back | **7 ms** | **36 MB** |
+| cold — compiling | 1.4 s | 585 MB |
+| warm — reading the result back | **6 ms** | **38 MB** |
 
 That gap is the whole argument against `WithCompiler` disappearing. The memory
 it is expensive for is the compiler *working*, not the compiled module sitting

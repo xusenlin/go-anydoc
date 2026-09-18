@@ -12,6 +12,15 @@ type config struct {
 	maxInputBytes int
 	compiler      bool
 	cacheDir      string
+
+	// keepRunningPastContext drops WithCloseOnContextDone, which nothing but
+	// the benchmarks should ever want: without it a cancelled context cannot
+	// interrupt a conversion already running inside the guest, so Convert
+	// keeps burning a core until the guest returns on its own. There is no
+	// Option for it on purpose. It exists because that one call is most of
+	// what separates the two runtimes on compiled figures, and a table
+	// claiming so has to be able to measure both sides of it.
+	keepRunningPastContext bool
 }
 
 func defaultConfig() config {
@@ -93,17 +102,17 @@ func WithMaxInputBytes(n int) Option {
 // WithCompiler trades startup cost and memory for throughput, by having wazy
 // compile the module to native code instead of interpreting it.
 //
-// Measured on the real module, per document: a 1 KB docx goes from 3.5ms to
-// 0.4ms, one with a 5 MB uncompressed body from 11.1s to 0.86s, and a 7.5 MB
-// PDF from 41s to 3.4s. The price is paid once in New, which goes from ~100ms
-// and 182 MB of RSS to ~2.7s and 638 MB. That 638 MB is an OOM kill in a
+// Measured on the real module, per document: a 1 KB docx goes from 1.4ms to
+// 0.13ms, one with a 5 MB uncompressed body from 6.8s to 0.19s, and a 7.6 MB
+// PDF from 12.1s to 0.33s. The price is paid once in New, which goes from
+// ~83ms and 137 MB of RSS to ~1.3s and 578 MB. That 578 MB is an OOM kill in a
 // 512 MB container, which is why this is opt-in rather than the default.
 //
 // The compilation is paid once, in New, not per document: Convert only
 // instantiates the already-compiled module. So this pays off in a long-lived
 // process that reuses one Converter, and is a pure loss in a short-lived one
-// that converts a single small document and exits -- there it buys ~3ms for
-// ~2.7s. Leave it off for tight containers too, unless you can also give it
+// that converts a single small document and exits -- there it buys ~1.3ms for
+// ~1.3s. Leave it off for tight containers too, unless you can also give it
 // WithCompilationCache, which removes both of those objections after the
 // first run.
 //
@@ -121,10 +130,10 @@ func WithCompiler() Option {
 // cost of WithCompiler is paid once per machine instead of once per process.
 //
 // It changes what WithCompiler costs more than it changes what it does.
-// Measured on the real module, a hit turns New from 2.8s and 647 MB of peak
-// RSS into 34ms and 50 MB, because the machine code is read back rather than
+// Measured on the real module, a hit turns New from 1.4s and 585 MB of peak
+// RSS into 6ms and 38 MB, because the machine code is read back rather than
 // produced -- the memory WithCompiler is expensive for is the compiler
-// working, not the compiled module sitting there. The directory holds ~23 MB.
+// working, not the compiled module sitting there. The directory holds ~15 MB.
 //
 // This only affects WithCompiler. The interpreter emits no machine code, so
 // there is nothing to persist and this option does nothing.

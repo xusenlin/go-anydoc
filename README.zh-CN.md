@@ -30,7 +30,7 @@ defer c.Close(ctx)
 md, err := c.Convert(ctx, docBytes, "docx")
 ```
 
-格式提示传 `""` 表示从内容自动识别。CSV 没有文件签名，必须显式指定。
+格式提示传 `""` 表示从内容自动识别。
 
 错误用 `errors.Is` 判断：
 
@@ -42,58 +42,47 @@ case errors.Is(err, anydoc.ErrMalformed):    // 格式认得出但内容损坏
 }
 ```
 
+## 支持的格式
+
+| | 扩展名 |
+|---|---|
+| Word | `.docx` `.docm`、`.doc`（97-2003）、`.odt` |
+| 电子表格 | `.xlsx` `.xlsm` `.xlsb` `.xls`、`.ods`、`.csv` |
+| 演示文稿 | `.pptx` `.pptm` `.ppsx` `.ppsm`、`.ppt` `.pps` `.pot`（97-2003）、`.odp` |
+| 其他 | `.pdf`、`.rtf`、`.epub`（2 和 3） |
+
+输出一律是 Markdown。格式提示就是上表里的裸扩展名，不在表里的会在读取文档之前就被拒绝。两点值得注意：`.csv` 没有文件签名，自动识别找不到它，只能显式指定；扫描件或纯图片 PDF 需要 OCR，而 anydoc 不做 OCR，这类文件会返回 `ErrUnsupported` 而不是空结果。
+
+这张表取决于内嵌 crate 能解析什么，所以重新构建模块时它会变；`anydoc.Info()` 报告的是实际编进去的那个版本。
+
 ## 设计取舍
 
 **用解释器而不是优化编译器。** wazy 有两种执行引擎：一种在加载时把 wasm 翻译成宿主机原生机器码（跑得快，加载贵，只支持 amd64/arm64），另一种逐条解释执行（加载几乎免费，哪都能跑，跑得慢）。本包**默认**用解释器——一个要塞进别人二进制里的库，没法假定自己能在用户机器上预热编译缓存，没法假定宿主允许编译器需要的可执行内存页（macOS hardened runtime 和某些 seccomp 策略会直接拒绝），更没法假定目标平台是 amd64 或 arm64。需要另一头的取舍时用 `WithCompiler` 显式打开。
 
-但**应用**是知道自己的数据目录在哪的，这会改变整个算式：`WithCompilationCache` 让编译器那笔成本变成一次性的 2.5 秒和 630 MB，此后每次启动都是 7 毫秒、36 MB——比解释器还便宜，转换还快两个数量级。下面的默认值是按「没有缓存」设的，因为库不能假定有。
+但**应用**是知道自己的数据目录在哪的，这会改变整个算式：`WithCompilationCache` 让编译器那笔成本变成一次性的 1.3 秒和 578 MB，此后每次启动都是 6 毫秒、38 MB——比解释器还便宜，转换还快两个数量级。下面的默认值是按「没有缓存」设的，因为库不能假定有。
 
 代价是真实存在的，而且随文档体积放大，上生产前请拿自己的语料实测：
 
 | | 解释器（默认） | 编译器 | 编译器 + 热缓存 |
 |---|---|---|---|
-| `New()`——每进程一次 | 72 ms | 2.5 s | **7 ms** |
-| 1 KB docx | 2.4 ms | 0.51 ms | 0.51 ms |
-| 解压后正文 5 MB 的 docx | 8.4 s | 0.18 s | 0.18 s |
-| 7.5 MB PDF | 34.5 s | 0.77 s | 0.77 s |
-| `New()` 之后的 RSS | 120 MB | 630 MB | **36 MB** |
+| `New()`——每进程一次 | 83 ms | 1.3 s | **6 ms** |
+| 1 KB docx | 1.4 ms | 0.13 ms | 0.13 ms |
+| 解压后正文 5 MB 的 docx | 6.8 s | 0.19 s | 0.19 s |
+| 7.6 MB PDF | 12.1 s | 0.33 s | 0.33 s |
+| `New()` 之后的 RSS | 137 MB | 578 MB | **38 MB** |
 
 第三列就是第二列在 `WithCompilationCache` 有目录可读之后的样子——执行方式完全相同，只是不用再付启动成本。转换耗时三列里第二第三完全一致，因为缓存改变的是机器码**怎么拿到**，不是它**是什么**。第二列只有每台机器的第一次会付。
 
-常规办公文档落在第二行，几毫秒，没有优化价值。上兆字节的文档则比编译模式慢约 **45 倍**——如果你要处理这类文档，要么用 `WithMaxInputBytes` 加 context 超时把长尾兜住（取消会当场打断 guest），要么显式打开 `WithCompiler`。
+常规办公文档落在第二行，几毫秒，没有优化价值。上兆字节的文档则比编译模式慢约 **36 倍**——如果你要处理这类文档，要么用 `WithMaxInputBytes` 加 context 超时把长尾兜住（取消会当场打断 guest），要么显式打开 `WithCompiler`。
 
-**用 wazy，不用 wazero。** [wazy](https://github.com/samyfodil/wazy) 是一个由 wazero 衍生而来的纯 Go 运行时，它把力气花在了主导这类负载的内存访问路径上。同一份模块、同一份输入、同一台机器：
+**用 wazy，不用 wazero。** 运行时用的是 [wazy](https://github.com/samyfodil/wazy)，一个由 wazero 衍生而来的纯 Go 运行时，它把力气花在了主导这类负载的内存访问路径上。在默认的解释器路径上，它转换这些文档比 wazero v1.12.0 快约 1.8 倍，内存分配少五个数量级——一份 7.6 MB 的 PDF 是 59 次对 4050 万次。编译模式下领先更多，但那部分差距的大头是 `WithCloseOnContextDone(true)` 对两个引擎各自的开销，而不是代码生成质量的差别；本包无条件设置这个选项，因为取消 context 必须能打断一次已经跑在 guest 里的转换。把这个效应拆开说清楚的完整对比，在 [wazy 的 README][wazy-bench] 和 [samyfodil/wazy#29][wazy-29]。
 
-| 转换 | wazero v1.12.0 | wazy v0.1.3 | |
-|---|---|---|---|
-| 1 KB docx，编译器 | 0.73 ms | 0.51 ms | 1.4× |
-| 正文 5 MB 的 docx，编译器 | 0.85 s | 0.18 s | **4.7×** |
-| 7.5 MB PDF，编译器 | 3.63 s | 0.77 s | **4.7×** |
-| 1 KB docx，解释器 | 2.55 ms | 2.39 ms | 1.1× |
-| 正文 5 MB 的 docx，解释器 | 10.9 s | 8.4 s | 1.3× |
-| 7.5 MB PDF，解释器 | 43.8 s | 34.5 s | 1.3× |
+把取舍摊开说：wazy 只有两个月大，单一作者，且明确声明不作 API 稳定性承诺；wazero 成熟、部署广泛、背后有公司。移植只改了一处 import——API、内嵌模块、退出码 ABI 全都没变，输出逐字节一致，交叉编译到 riscv64、ppc64le、386、s390x 同样正常。退回去也是同样那一行。
 
-优势集中在长时间计算，而且计算越长差距越大。另一半是内存分配：解释执行那份 PDF，wazy 是 472 次分配、100 MB，wazero 是 5800 万次、1.5 GB。
+[wazy-bench]: https://github.com/samyfodil/wazy#at-scale-a-65-mb-rust-module
+[wazy-29]: https://github.com/samyfodil/wazy/issues/29
 
-编译模式那几行的差距主要来自一个选项，不是代码生成质量。本包无条件设置 `WithCloseOnContextDone(true)`，因为取消 context 必须能打断一次已经跑在 guest 里的转换，而 wazero 的编译器为此付的代价比 wazy 大得多：它会把终止检查插进生成的机器码。只切换这一行调用，同一份 5 MB 的 docx：
-
-| 编译模式，正文 5 MB 的 docx | wazero v1.12.0 | wazy v0.1.3 | |
-|---|---|---|---|
-| 开启，即本包的实际配置 | 0.92 s | 0.20 s | **4.7×** |
-| 关闭 | 0.14 s | 0.12 s | 1.2× |
-| 该选项的代价 | 6.5× | 1.6× | |
-
-关掉之后两个编译器相差 20%，大致就是 wazy 自己宣称的水平。所以 4.7× 对本包的调用方是真实的，但它衡量的是 wazero 的终止检查，不是它的代码生成。解释器那几行是另一回事：该选项在两边的解释器里都不要钱，所以那里的 1.3× 是引擎差距。[go-pdfium 在 5000 份 PDF 上测到同样的效应][pdfium-ccd]，wazero 约 4.5×，wazy 约 1.4×。
-
-这三行是单独跑的一轮，所以第一行是 0.92 s，而上表同一格写的是 0.85 s。几个百分点的运行间漂移，比值不变。
-
-[pdfium-ccd]: https://github.com/klippa-app/go-pdfium/blob/main/experimental/BENCHMARKS.md#the-cost-of-close-on-context-done
-
-移植只改了一处 import。API、内嵌模块、退出码 ABI 全都没变，输出逐字节一致，交叉编译到 riscv64、ppc64le、386、s390x 同样正常。
-
-把取舍摊开说：wazy 只有一个月大，单一作者，且明确声明不作 API 稳定性承诺；wazero 成熟、部署广泛、背后有公司。本包选了新的那个，因为它的默认路径是解释器，在跑几十秒的文档上 wazy 快三分之一、内存分配少五个数量级，也因为退回去同样只是那一行。
-
-<sub>本页每个数字都出自 `bench_test.go`，可以自己核验而不必相信：`go test -run '^$' -bench . -benchtime 3x`，PDF 那几行加 `ANYDOC_BENCH_PDF=big.pdf`。实测环境：Apple M5 Pro（18 核），48 GB，macOS 26.5，Go 1.26.1，`CGO_ENABLED=0`，`anydoc.wasm` 6,781,177 字节（anydoc 0.2.3）。5 MB 那一行是 2.5 万行表格，zip 后只有 42 KB——真正决定耗时的是解压后的正文体积——并且需要 `WithMemoryLimitPages(1280)`，高于默认值。</sub>
+<sub>本页每个数字都出自 `bench_test.go`，可以自己核验而不必相信：`go test -run '^$' -bench . -benchtime 3x -count 3`，PDF 那几行加 `ANYDOC_BENCH_PDF=big.pdf`。输入由 harness 自己生成，所以不需要 PDF 的部分，clone 下来就能复现。实测环境：Apple M5 Pro（18 核），48 GB，macOS 26.5，Go 1.26.1，`CGO_ENABLED=0`，`anydoc.wasm` 6,781,177 字节（anydoc 0.2.3）；取 3 次最小值，因为这台机器有性能核和能效核而又无法把测试钉在其中一类上，中位数并不可信。5 MB 那一行是 2.5 万行表格，zip 后只有 42 KB——真正决定耗时的是解压后的正文体积——benchmark 给它的是 `WithMemoryLimitPages(4096)`，高于它实际需要的 1280，更远高于默认值。`New()` 和 RSS 是另一个单独的探针测的，因为 `-benchtime` 数的是转换次数而不是启动次数。</sub>
 
 **每份文档一个全新 guest。** 每次 `Convert` 都新建独立的线性内存，所以一份大文档不会让内存被永久占住，一份畸形文档也不会把状态泄漏给下一次调用。真正昂贵的编译只在 `New` 里做一次。
 
@@ -111,7 +100,7 @@ go build -tags anydoc_nowasm    # 省下 6.84 MB
 
 此时 `embeddedWASM` 为 nil，`New` 要求必须传 `WithWASM(r)` 或 `WithWASMBytes(b)`。适用于容器分层、Serverless 部署包大小限制、锁定另一个 anydoc 构建，或者禁止二进制内嵌不可追溯 blob 的合规环境。
 
-省下的是 6.78 MB 的模块本身，再加上约 56 KB 的 `embed` 机制开销。给个体感：`examples/convert` 正常编译 14.5 MB，加上这个 tag 是 7.7 MB。
+省下的是 6.78 MB 的模块本身，再加上约 56 KB 的 `embed` 机制开销。给个体感：`examples/convert` 正常编译 15.1 MB，加上这个 tag 是 8.3 MB。
 
 注意 build tag 只影响编译产物，不影响 `go get`——模块文件在 Go module 里躺着，两种情况都要下载。
 
@@ -131,7 +120,7 @@ anydoc.New(
 
 把模块编译成原生机器码而不是解释执行，效果就是把上面那张表从左列变成右列。
 
-这笔成本**只在 `New` 里付一次**，不是每份文档都付——`Convert` 只做实例化，用的是已经编好的模块。所以它适合长期运行、复用同一个 `Converter` 的进程；对于「转一份小文档就退出」的短命进程则是纯亏：花 2.4 秒省 1.9 毫秒。
+这笔成本**只在 `New` 里付一次**，不是每份文档都付——`Convert` 只做实例化，用的是已经编好的模块。所以它适合长期运行、复用同一个 `Converter` 的进程；对于「转一份小文档就退出」的短命进程则是纯亏：花 1.3 秒省 1.3 毫秒。
 
 它是一个**请求，不是保证**。编译器后端需要主流操作系统上的 amd64 或 arm64，还需要宿主允许 mmap 可执行页。条件不满足时——riscv64、ppc64le、386、macOS hardened runtime、某些 seccomp 策略——wazy 会**静默退回解释器**，转换照常完成，只是速度是解释器的速度。
 
@@ -143,8 +132,8 @@ anydoc.New(
 
 | 带 `WithCompiler` 的 `New()` | 耗时 | 峰值 RSS |
 |---|---|---|
-| 冷启动——正在编译 | 2.5 s | 630 MB |
-| 热启动——把结果读回来 | **7 ms** | **36 MB** |
+| 冷启动——正在编译 | 1.4 s | 585 MB |
+| 热启动——把结果读回来 | **6 ms** | **38 MB** |
 
 这个差距把反对 `WithCompiler` 的理由整个消掉了。`WithCompiler` 费内存的部分是**编译器在工作**，不是编好的模块躺在那里；命中缓存时是加载机器码，而不是生产机器码。缓存目录约 15 MB。
 

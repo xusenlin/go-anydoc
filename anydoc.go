@@ -72,18 +72,18 @@ func New(opts ...Option) (*Converter, error) {
 	//     identically on riscv64, ppc64le, 386 and anything else Go targets.
 	//  2. The compiler needs mmap'd executable pages, which macOS hardened
 	//     runtime and some seccomp profiles refuse. The interpreter never asks.
-	//  3. Compiling this module costs ~2.7s and 638 MB of RSS, against ~100ms
-	//     and 182 MB to interpret it, and 638 MB is an OOM kill in a 512 MB
+	//  3. Compiling this module costs ~1.3s and 578 MB of RSS, against ~83ms
+	//     and 137 MB to interpret it, and 578 MB is an OOM kill in a 512 MB
 	//     container. A library cannot assume it may write a compilation cache
 	//     somewhere on the user's machine, so it cannot make that the default
 	//     -- but an application knows where its own data lives, which is what
 	//     WithCompilationCache is for: with a warm cache those figures become
-	//     34ms and 50 MB, and the reasoning above stops applying.
+	//     6ms and 38 MB, and the reasoning above stops applying.
 	//
 	// The cost is throughput, and it scales with document size rather than
 	// being a flat overhead: measured on the real module, a 1 KB docx takes
-	// 3.5ms interpreted against 0.4ms compiled, but a docx with a 5 MB
-	// uncompressed body takes 11s against 0.9s. Small documents are free;
+	// 1.4ms interpreted against 0.13ms compiled, but a docx with a 5 MB
+	// uncompressed body takes 6.8s against 0.19s. Small documents are free;
 	// multi-megabyte ones are not. Callers who need the throughput and can
 	// afford the memory opt in with WithCompiler; everyone else bounds the
 	// tail with WithMaxInputBytes and a context deadline.
@@ -99,7 +99,7 @@ func New(opts ...Option) (*Converter, error) {
 	}
 	rtCfg = rtCfg.
 		WithMemoryLimitPages(cfg.memoryPages).
-		WithCloseOnContextDone(true)
+		WithCloseOnContextDone(!cfg.keepRunningPastContext)
 
 	// The compiler's output is worth keeping. Compiling this module is what
 	// costs seconds and hundreds of megabytes; loading the result back is
